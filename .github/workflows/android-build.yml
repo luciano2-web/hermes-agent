@@ -50,9 +50,12 @@ jobs:
           cmdline-tools-version: 9.0
           accept-android-sdk-licenses: true
 
+      - name: Accept all Android SDK licenses
+        run: yes | sdkmanager --licenses
+
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "emulator" "tools"
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v3
