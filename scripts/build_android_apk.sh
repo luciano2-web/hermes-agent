@@ -12,6 +12,7 @@ ANDROID_DIR="$REPO_ROOT/android"
 BUILD_TOOLS_VERSION="34.0.0"
 ANDROID_SDK_VERSION="34"
 JDK_VERSION="17"
+PYTHON_VERSION="3.13"
 
 # Colors for output
 RED='\033[0;31m'
@@ -118,16 +119,30 @@ if ! command -v java &>/dev/null; then
     exit 1
 fi
 
-JAVA_VERSION=$(java -version 2>&1 | grep -E '^[openjdk|java] version' | awk '{print $3}' | tr -d '"' | cut -d'.' -f1)
-if [ "$JAVA_VERSION" -lt "$JDK_VERSION" ]; then
+JAVA_VERSION=$(java -version 2>&1 | sed -nE 's/.*version "([0-9]+).*/\1/p' | head -1)
+if [ -n "$JAVA_VERSION" ] && [ "$JAVA_VERSION" -lt "$JDK_VERSION" ]; then
     warn "Java version $JAVA_VERSION found. JDK $JDK_VERSION or later recommended."
+fi
+
+# Check for the Python that Chaquopy uses to byte-compile the app's packages.
+# It must match the app's Python major.minor; build.gradle checks the same thing
+# and lets the Chaquopy plugin fail with its own message, but a clear error here
+# saves a full build first.
+log "Checking Python $PYTHON_VERSION..."
+if ! { command -v "python$PYTHON_VERSION" &>/dev/null || [ -n "${HERMES_BUILD_PYTHON:-}" ]; }; then
+    error "python$PYTHON_VERSION not found on PATH."
+    error "Chaquopy compiles the bundled Python packages with it (see android/app/build.gradle)."
+    error "Install Python $PYTHON_VERSION (e.g. 'uv python install $PYTHON_VERSION')"
+    error "or point HERMES_BUILD_PYTHON at an existing interpreter."
+    exit 1
 fi
 
 # Check for Android SDK
 log "Checking Android SDK..."
-if [ -z "$ANDROID_HOME" ]; then
+if [ -z "${ANDROID_HOME:-}" ]; then
     warn "ANDROID_HOME not set. Using default location."
     ANDROID_HOME="$HOME/Android/Sdk"
+    export ANDROID_HOME
 fi
 
 if [ ! -d "$ANDROID_HOME" ]; then
@@ -145,24 +160,34 @@ if [ ! -d "$ANDROID_HOME/platform-tools" ]; then
     exit 1
 fi
 
-# Build tools
-if [ ! -d "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" ]; then
-    warn "Android build-tools $BUILD_TOOLS_VERSION not found"
-    warn "Attempting to install..."
-    if ! yes | android update sdk --no-ui --all --filter "build-tools;$BUILD_TOOLS_VERSION"; then
-        error "Failed to install build-tools"
+# Resolve sdkmanager (the `android` tool was removed from current SDK packages).
+SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -1)"
+if [ -z "$SDKMANAGER" ] && command -v sdkmanager &>/dev/null; then
+    SDKMANAGER="$(command -v sdkmanager)"
+fi
+
+install_sdk_package() {
+    local package="$1"
+    if [ -z "$SDKMANAGER" ]; then
+        error "Android SDK package '$package' is missing and sdkmanager was not found."
+        error "Install it with Android Studio or: sdkmanager '$package'"
         exit 1
     fi
+    warn "Attempting to install $package..."
+    if ! yes | "$SDKMANAGER" "$package"; then
+        error "Failed to install $package"
+        exit 1
+    fi
+}
+
+# Build tools
+if [ ! -d "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION" ]; then
+    install_sdk_package "build-tools;$BUILD_TOOLS_VERSION"
 fi
 
 # Platform
 if [ ! -d "$ANDROID_HOME/platforms/android-$ANDROID_SDK_VERSION" ]; then
-    warn "Android platform $ANDROID_SDK_VERSION not found"
-    warn "Attempting to install..."
-    if ! yes | android update sdk --no-ui --all --filter "platforms;android-$ANDROID_SDK_VERSION"; then
-        error "Failed to install platform"
-        exit 1
-    fi
+    install_sdk_package "platforms;android-$ANDROID_SDK_VERSION"
 fi
 
 # Clean if requested
@@ -176,28 +201,33 @@ fi
 
 # Update version in build.gradle
 log "Updating version to $VERSION..."
-sed -i "s/versionCode [0-9]*/versionCode ${VERSION//./}/" "$ANDROID_DIR/app/build.gradle"
+# versionCode must be a plain integer: keep the digits of the version only.
+VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9')"
+[ -n "$VERSION_CODE" ] || VERSION_CODE=1
+sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" "$ANDROID_DIR/app/build.gradle"
 sed -i "s/versionName \"[^\"]*\"/versionName \"$VERSION\"/" "$ANDROID_DIR/app/build.gradle"
 
 # Create keystore directory
 log "Setting up keystore..."
 mkdir -p "$ANDROID_DIR/app/keystore"
 
-# Create debug keystore if it doesn't exist
-if [ ! -f "$ANDROID_DIR/app/keystore/debug.keystore" ]; then
-    log "Creating debug keystore..."
-    keytool -genkey -v -keystore "$ANDROID_DIR/app/keystore/debug.keystore" \
-        -storepass android -alias androiddebugkey -keypass android \
+# Create the release keystore android/app/build.gradle looks for. Without it,
+# assembleRelease falls back to debug signing so the APK stays installable.
+if [ ! -f "$ANDROID_DIR/app/keystore/hermes-release.keystore" ]; then
+    warn "No release keystore at app/keystore/hermes-release.keystore."
+    warn "Creating a self-signed one; provide ANDROID_STORE_PASSWORD/ANDROID_KEY_* to replace it."
+    keytool -genkey -v -keystore "$ANDROID_DIR/app/keystore/hermes-release.keystore" \
+        -storepass android -alias hermes -keypass android \
         -keyalg RSA -keysize 2048 -validity 10000 \
-        -dname "CN=Android Debug,O=Android,C=US"
+        -dname "CN=Hermes Agent,O=Nous Research,C=US"
 fi
 
 # Build the APK
 log "Building APK..."
 cd "$ANDROID_DIR"
 
-# Make gradle wrapper executable
-chmod +x gradle/wrapper/gradle-wrapper.jar
+# Make the gradle wrapper executable
+chmod +x gradlew
 
 # Build based on type
 if [ "$BUILD_TYPE" = "debug" ]; then
@@ -210,17 +240,15 @@ if [ "$BUILD_TYPE" = "debug" ]; then
     APK_NAME="Hermes-Agent-${VERSION}-debug.apk"
 elif [ "$BUILD_TYPE" = "release" ]; then
     log "Building release APK..."
-    if [ ! -f "$ANDROID_DIR/app/keystore/release.keystore" ]; then
-        error "Release keystore not found at $ANDROID_DIR/app/keystore/release.keystore"
-        error "Please provide a valid release keystore for signing"
-        exit 1
-    fi
     if ! ./gradlew assembleRelease --stacktrace --no-daemon; then
         error "Failed to build release APK"
         exit 1
     fi
     APK_PATH="app/build/outputs/apk/release/app-release.apk"
     APK_NAME="Hermes-Agent-${VERSION}-release.apk"
+    if [ ! -f "$ANDROID_DIR/$APK_PATH" ]; then
+        APK_PATH="app/build/outputs/apk/release/app-release-unsigned.apk"
+    fi
 fi
 
 # Copy and rename APK
@@ -241,9 +269,13 @@ echo "Or use adb:"
 echo "  adb install $REPO_ROOT/${APK_NAME}"
 
 # Verify APK
-if command -v aapt &>/dev/null; then
+AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt 2>/dev/null | head -1)"
+if [ -z "$AAPT" ]; then
+    AAPT="$(command -v aapt || true)"
+fi
+if [ -n "$AAPT" ]; then
     log "Verifying APK..."
-    aapt dump badging "$REPO_ROOT/${APK_NAME}"
+    "$AAPT" dump badging "$REPO_ROOT/${APK_NAME}" | grep -E "package:|sdkVersion|targetSdkVersion|application-label:|native-code"
 fi
 
 exit 0

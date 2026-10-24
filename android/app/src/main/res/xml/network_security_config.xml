@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The dashboard is served by the app itself, on this device's loopback
+     interface. Allow cleartext for those loopback names only; everything else
+     stays TLS-only (targetSdk 34 defaults to no cleartext at all). -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

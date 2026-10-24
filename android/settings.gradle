@@ -3,6 +3,15 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
+        // Chaquopy's Gradle plugin and its Python runtime artifacts.
+        maven { url 'https://chaquo.com/maven' }
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
         maven { url 'https://chaquo.com/maven' }
     }
 }

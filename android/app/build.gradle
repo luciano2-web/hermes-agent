@@ -1,8 +1,36 @@
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
-    id 'com.chaquo.python' version '12.0.1'
+    id 'com.chaquo.python'
 }
+
+// Chaquopy compiles the app's Python sources to .pyc on the build machine, which
+// requires a Python whose major.minor matches the app's (3.13). Honour an explicit
+// override, else look for python3.13 on PATH; if neither is found the Chaquopy
+// plugin reports its own error while configuring.
+def resolveBuildPython() {
+    def candidates = []
+    def fromEnv = System.getenv('HERMES_BUILD_PYTHON')
+    if (fromEnv) {
+        candidates << fromEnv
+    }
+    candidates << 'python3.13'
+    for (candidate in candidates) {
+        try {
+            def process = new ProcessBuilder(candidate, '-c',
+                    'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)')
+                    .redirectErrorStream(true).start()
+            if (process.waitFor() == 0) {
+                return candidate
+            }
+        } catch (Exception ignored) {
+            // Not on PATH (or not executable): try the next candidate.
+        }
+    }
+    return null
+}
+
+def buildPythonCmd = resolveBuildPython()
+def releaseKeystore = file('keystore/hermes-release.keystore')
 
 android {
     namespace 'com.nousresearch.hermes'
@@ -17,40 +45,73 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // Enable multidex for large apps
         multiDexEnabled true
+
+        // Android wheels only exist for these two ABIs (Chaquopy's index covers
+        // both, ririv's android-wheels covers both); shipping armeabi-v7a or x86
+        // would make pip fail for that ABI.
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (releaseKeystore.exists()) {
+                storeFile releaseKeystore
+                storePassword System.getenv('ANDROID_STORE_PASSWORD') ?: 'android'
+                keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'hermes'
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: 'android'
+            }
+        }
     }
 
     buildTypes {
-        release {
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
-        }
         debug {
             minifyEnabled false
             shrinkResources false
             debuggable true
         }
+        release {
+            // R8 shrinking is off: the Python runtime and Chaquopy's generated
+            // bindings are not analysed by ProGuard rules we can trust here.
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Fall back to debug keys so `assembleRelease` still yields an
+            // installable APK when no release keystore has been provisioned.
+            signingConfig releaseKeystore.exists() ? signingConfigs.release : signingConfigs.debug
+        }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = '1.8'
-    }
-
-    buildFeatures {
-        viewBinding true
-    }
-
-    packagingOptions {
+    packaging {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
+        }
+    }
+}
+
+// Configuration for Chaquopy (Python for Android).
+chaquopy {
+    defaultConfig {
+        version = '3.13'
+        if (buildPythonCmd != null) {
+            buildPython buildPythonCmd
+        }
+        pip {
+            // The pin set in requirements-android.txt is the full dependency
+            // closure, pre-verified against the Android wheel indexes. --no-deps
+            // is required: hermes-agent's own metadata pins pydantic==2.13.4,
+            // whose pydantic-core has no Android wheel.
+            options '--no-deps'
+            // pydantic-core / jiter Android wheels, absent from Chaquopy's index.
+            options '--extra-index-url', 'https://ririv.github.io/android-wheels/'
+            install '-r', 'requirements-android.txt'
         }
     }
 }
@@ -60,34 +121,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    
-    // Chaquopy will be applied via plugin, no need for explicit dependency
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-}
-
-// Configuration for Chaquopy (Python for Android)
-android {
-    defaultConfig {
-        python {
-            version "3.10"
-            pip {
-                // Install hermes-agent from PyPI
-                install "hermes-agent"
-            }
-        }
-    }
-}
-
-// Signing configuration for release builds
-android {
-    signingConfigs {
-        release {
-            storeFile file('keystore/hermes-release.keystore')
-            storePassword System.getenv('ANDROID_STORE_PASSWORD') ?: 'android'
-            keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'hermes'
-            keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: 'android'
-        }
-    }
 }

@@ -1,256 +1,234 @@
 package com.nousresearch.hermes;
 
 import android.Manifest;
-import android.app.AlertDialog;
-import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
-import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
-import android.text.Html;
 import android.util.Log;
 import android.view.View;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.chaquo.python.Python;
-import com.chaquo.python.android.AndroidPlatform;
-
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+/**
+ * Launches the Hermes runtime (Chaquopy Python) and shows its web dashboard.
+ *
+ * The dashboard server is the app's real UI: it binds 127.0.0.1 inside this
+ * process and is rendered in a WebView. Nothing about it needs runtime storage
+ * permissions — HERMES_HOME lives in app-private storage.
+ */
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
-    private static final int REQUEST_CODE_PERMISSIONS = 1001;
-    private static final int REQUEST_CODE_DOWNLOAD = 1002;
-    
+    private static final int REQUEST_POST_NOTIFICATIONS = 1001;
+
+    private static final int DASHBOARD_PORT = 9119;
+    private static final String DASHBOARD_URL = "http://127.0.0.1:" + DASHBOARD_PORT + "/";
+    private static final long READY_TIMEOUT_MS = 180_000L;
+
+    private View introPanel;
+    private WebView webView;
     private ProgressBar progressBar;
     private TextView statusText;
     private Button startButton;
-    
-    private String hermesVersion = "latest";
-    private File hermesDir;
-    private File pythonDir;
+
+    // Thread 1 runs the (blocking) dashboard server, thread 2 waits for it to answer.
+    private final ExecutorService executor = Executors.newFixedThreadPool(2);
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    private volatile boolean launching = false;
+    private volatile String serverError = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        
+
+        introPanel = findViewById(R.id.introPanel);
+        webView = findViewById(R.id.webView);
         progressBar = findViewById(R.id.progressBar);
         statusText = findViewById(R.id.statusText);
         startButton = findViewById(R.id.startButton);
-        
-        hermesDir = new File(getFilesDir(), "hermes");
-        pythonDir = new File(hermesDir, "python");
-        
-        // Check and request permissions
-        checkAndRequestPermissions();
-        
-        startButton.setOnClickListener(v -> startHermes());
+
+        configureWebView();
+        requestNotificationPermissionIfNeeded();
+
+        startButton.setOnClickListener(v -> launchAgent());
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
+                    webView.goBack();
+                } else {
+                    finish();
+                }
+            }
+        });
+
+        launchAgent();
     }
 
-    private void checkAndRequestPermissions() {
-        List<String> permissionsNeeded = new ArrayList<>();
-        
-        // Check storage permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) 
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-            }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsNeeded.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-            }
-        }
-        
-        // Check network permission (usually normal)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.INTERNET) 
-                != PackageManager.PERMISSION_GRANTED) {
-            permissionsNeeded.add(Manifest.permission.INTERNET);
-        }
-        
-        if (!permissionsNeeded.isEmpty()) {
+    private void configureWebView() {
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        // Keep every navigation inside the app: the dashboard is the whole UI.
+        webView.setWebViewClient(new WebViewClient());
+    }
+
+    /** Android 13+: ask for the service notification. Purely optional — never blocks startup. */
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
-                    this,
-                    permissionsNeeded.toArray(new String[0]),
-                    REQUEST_CODE_PERMISSIONS
-            );
-        } else {
-            initializeHermes();
+                    this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIFICATIONS);
         }
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, 
+    public void onRequestPermissionsResult(int requestCode,
             @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        
-        if (requestCode == REQUEST_CODE_PERMISSIONS) {
-            boolean allGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                    break;
-                }
-            }
-            
-            if (allGranted) {
-                initializeHermes();
-            } else {
-                showErrorAndExit("Permissions are required to run Hermes Agent");
-            }
+        if (requestCode == REQUEST_POST_NOTIFICATIONS) {
+            Log.i(TAG, "POST_NOTIFICATIONS granted=" +
+                    (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED));
         }
     }
 
-    private void initializeHermes() {
-        new Handler(Looper.getMainLooper()).post(() -> {
-            statusText.setText("Initializing Hermes Agent...");
-            progressBar.setVisibility(View.VISIBLE);
-        });
-        
-        new AsyncTask<Void, String, Boolean>() {
-            @Override
-            protected Boolean doInBackground(Void... voids) {
-                try {
-                    publishProgress("Checking Python runtime...");
-                    
-                    // Initialize Python
-                    PythonManager.initialize(MainActivity.this);
-                    
-                    publishProgress("Checking Hermes installation...");
-                    
-                    // Check if Hermes is already installed
-                    if (!isHermesInstalled()) {
-                        publishProgress("Downloading Hermes...");
-                        return downloadAndInstallHermes();
-                    }
-                    
-                    publishProgress("Hermes is ready!");
-                    return true;
-                    
-                } catch (Exception e) {
-                    Log.e(TAG, "Initialization failed: " + e.getMessage(), e);
-                    return false;
-                }
-            }
-            
-            @Override
-            protected void onProgressUpdate(String... values) {
-                statusText.setText(values[0]);
-            }
-            
-            @Override
-            protected void onPostExecute(Boolean success) {
-                progressBar.setVisibility(View.GONE);
-                
-                if (success) {
-                    startButton.setVisibility(View.VISIBLE);
-                    startButton.setEnabled(true);
-                } else {
-                    showErrorAndExit("Failed to initialize Hermes Agent");
-                }
-            }
-        }.execute();
+    private void launchAgent() {
+        if (launching) {
+            return;
+        }
+        launching = true;
+        serverError = null;
+        startButton.setEnabled(false);
+        startButton.setVisibility(View.GONE);
+        progressBar.setVisibility(View.VISIBLE);
+        statusText.setText(R.string.starting_python);
+
+        executor.execute(this::startPython);
     }
 
-    private boolean isHermesInstalled() {
-        // With Chaquopy, hermes-agent is bundled as a Python package
-        // Check if we can import it via Python
+    private void startPython() {
         try {
-            Python python = PythonManager.getPython();
-            python.getModule("hermes_cli");
+            PythonManager.initialize(getApplicationContext());
+        } catch (Throwable t) {
+            Log.e(TAG, "Python runtime failed to start", t);
+            fail("Python runtime failed to start: " + messageOf(t));
+            return;
+        }
+
+        runOnUiThread(() -> statusText.setText(R.string.starting_dashboard));
+
+        // The dashboard blocks for the lifetime of the server, so it owns its own thread.
+        executor.execute(() -> {
+            try {
+                PythonManager.startDashboard(new File(getFilesDir(), "hermes-home"), DASHBOARD_PORT);
+            } catch (Throwable t) {
+                Log.e(TAG, "Hermes dashboard stopped", t);
+                serverError = messageOf(t);
+            }
+        });
+
+        long deadline = System.currentTimeMillis() + READY_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            if (serverError != null) {
+                fail("Hermes failed to start: " + serverError);
+                return;
+            }
+            if (isDashboardReady()) {
+                runOnUiThread(this::showDashboard);
+                return;
+            }
+            try {
+                Thread.sleep(500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        fail("Timed out waiting for the Hermes dashboard to answer on port " + DASHBOARD_PORT + ".");
+    }
+
+    /** Any HTTP answer means the server is up and accepting connections. */
+    private boolean isDashboardReady() {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(DASHBOARD_URL).openConnection();
+            connection.setConnectTimeout(1_000);
+            connection.setReadTimeout(1_000);
+            connection.setRequestMethod("GET");
+            connection.getResponseCode();
             return true;
-        } catch (Exception e) {
+        } catch (IOException e) {
             return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
-    private boolean downloadAndInstallHermes() {
-        // With Chaquopy, hermes-agent is installed via pip during build
-        // No need to download at runtime - it's already bundled in the APK
-        Log.i(TAG, "Hermes is pre-installed via Chaquopy pip configuration");
-        return true;
+    private void showDashboard() {
+        statusText.setText(R.string.loading_dashboard);
+        progressBar.setVisibility(View.GONE);
+        introPanel.setVisibility(View.GONE);
+        webView.setVisibility(View.VISIBLE);
+        webView.loadUrl(DASHBOARD_URL);
+
+        // Keep the agent process alive while the user is elsewhere in the app.
+        Intent service = new Intent(this, HermesService.class);
+        ContextCompat.startForegroundService(this, service);
     }
 
-    private void startHermes() {
-        new AsyncTask<Void, Void, Boolean>() {
-            @Override
-            protected Boolean doInBackground(Void... voids) {
-                try {
-                    // Start Hermes using Python
-                    Python python = PythonManager.getPython();
-                    
-                    // Change to hermes directory
-                    File hermesDir = new File(getFilesDir(), "hermes");
-                    System.setProperty("HERMES_HOME", hermesDir.getAbsolutePath());
-                    
-                    // Execute hermes
-                    python.getModule("hermes_cli.main").callAttr("main");
-                    
-                    return true;
-                    
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to start Hermes: " + e.getMessage(), e);
-                    return false;
-                }
-            }
-            
-            @Override
-            protected void onPostExecute(Boolean success) {
-                if (!success) {
-                    showError("Failed to start Hermes. Check logs for details.");
-                }
-            }
-        }.execute();
+    private void fail(String reason) {
+        launching = false;
+        Log.e(TAG, reason);
+        runOnUiThread(() -> {
+            progressBar.setVisibility(View.GONE);
+            introPanel.setVisibility(View.VISIBLE);
+            webView.setVisibility(View.GONE);
+            statusText.setText(reason);
+            startButton.setText(R.string.retry);
+            startButton.setVisibility(View.VISIBLE);
+            startButton.setEnabled(true);
+            Toast.makeText(this, R.string.error_message, Toast.LENGTH_LONG).show();
+        });
     }
 
-    private void showErrorAndExit(String message) {
-        new AlertDialog.Builder(this)
-                .setTitle("Error")
-                .setMessage(message)
-                .setPositiveButton("OK", (dialog, which) -> finish())
-                .setCancelable(false)
-                .show();
+    private static String messageOf(Throwable t) {
+        return t.getMessage() != null ? t.getMessage() : t.toString();
     }
-
-    private void showError(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-    }
-
-    // Asset copying methods removed - not needed with Chaquopy
-    // Python packages are bundled automatically by Chaquopy
-    // Hermes is installed via pip in build.gradle configuration
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        PythonManager.shutdown();
+        executor.shutdownNow();
+        webView.destroy();
     }
 }

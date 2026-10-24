@@ -325,3 +325,12 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# Android builds: Gradle output, local SDK/JDK toolchain, generated APKs, signing keys
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/keystore/
+*.apk
+/.toolchain/
