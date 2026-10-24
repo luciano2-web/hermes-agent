@@ -47,7 +47,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          cmdline-tools-version: 9.0
+          # Use the runner's current command-line tools instead of the removed v9 download.
           accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
