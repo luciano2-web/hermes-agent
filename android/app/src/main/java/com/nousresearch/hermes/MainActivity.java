@@ -37,9 +37,8 @@ public class MainActivity extends AppCompatActivity {
     private TextView statusText;
     private Button startButton;
     
-    private String hermesVersion = "latest";
+    private String initializationError = "Failed to initialize Hermes Agent. Check the Android logs for details.";
     private File hermesDir;
-    private File pythonDir;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,7 +50,6 @@ public class MainActivity extends AppCompatActivity {
         startButton = findViewById(R.id.startButton);
         
         hermesDir = new File(getFilesDir(), "hermes");
-        pythonDir = new File(hermesDir, "python");
         
         // Check and request permissions
         checkAndRequestPermissions();
@@ -85,15 +83,17 @@ public class MainActivity extends AppCompatActivity {
                     
                     // Check if Hermes is already installed
                     if (!isHermesInstalled()) {
-                        publishProgress("Downloading Hermes...");
-                        return downloadAndInstallHermes();
+                        initializationError = "Hermes Python modules are not bundled in this APK yet. The Android package needs an Android-compatible Hermes dependency build before the agent can start.";
+                        publishProgress("Hermes modules are missing from this APK.");
+                        return false;
                     }
                     
                     publishProgress("Hermes is ready!");
                     return true;
                     
                 } catch (Exception e) {
-                    Log.e(TAG, "Initialization failed: " + e.getMessage(), e);
+                    initializationError = "Initialization failed: " + e.getMessage();
+                    Log.e(TAG, initializationError, e);
                     return false;
                 }
             }
@@ -111,7 +111,7 @@ public class MainActivity extends AppCompatActivity {
                     startButton.setVisibility(View.VISIBLE);
                     startButton.setEnabled(true);
                 } else {
-                    showErrorAndExit("Failed to initialize Hermes Agent");
+                    showErrorAndExit(initializationError);
                 }
             }
         }.execute();
@@ -127,13 +127,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private boolean downloadAndInstallHermes() {
-        // With Chaquopy, hermes-agent is installed via pip during build
-        // No need to download at runtime - it's already bundled in the APK
-        Log.i(TAG, "Hermes is pre-installed via Chaquopy pip configuration");
-        return true;
     }
 
     private void startHermes() {
