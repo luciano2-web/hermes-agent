@@ -5,8 +5,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.webkit.WebSettings;
@@ -52,11 +50,17 @@ public class MainActivity extends AppCompatActivity {
     private Button startButton;
 
     // Thread 1 runs the (blocking) dashboard server, thread 2 waits for it to answer.
+    // The executor belongs to this Activity; the runtime it drives does not.
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    // Process-wide launch state. The Python runtime and the dashboard outlive this
+    // Activity (rotation, relaunch from the launcher while the foreground service keeps
+    // the process alive), so a new MainActivity must attach to the running server instead
+    // of starting a second one, which would only ever fail with "port already in use".
+    private static volatile boolean dashboardRunning = false;
+    private static volatile String dashboardError = null;
 
     private volatile boolean launching = false;
-    private volatile String serverError = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -85,7 +89,13 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        launchAgent();
+        if (dashboardError != null) {
+            // The previous launch failed: show that instead of auto-retrying on every
+            // recreation. Retry is the user's call.
+            showFailure(dashboardError);
+        } else {
+            launchAgent();
+        }
     }
 
     private void configureWebView() {
@@ -125,7 +135,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         launching = true;
-        serverError = null;
+        dashboardError = null;
         startButton.setEnabled(false);
         startButton.setVisibility(View.GONE);
         progressBar.setVisibility(View.VISIBLE);
@@ -145,20 +155,31 @@ public class MainActivity extends AppCompatActivity {
 
         runOnUiThread(() -> statusText.setText(R.string.starting_dashboard));
 
-        // The dashboard blocks for the lifetime of the server, so it owns its own thread.
-        executor.execute(() -> {
-            try {
-                PythonManager.startDashboard(new File(getFilesDir(), "hermes-home"), DASHBOARD_PORT);
-            } catch (Throwable t) {
-                Log.e(TAG, "Hermes dashboard stopped", t);
-                serverError = messageOf(t);
-            }
-        });
+        if (!dashboardRunning) {
+            dashboardRunning = true;
+            // The dashboard blocks for the lifetime of the server, so it owns its own thread.
+            executor.execute(() -> {
+                try {
+                    int rc = PythonManager.startDashboard(
+                            new File(getFilesDir(), "hermes-home"), DASHBOARD_PORT);
+                    // 0: the server this call started has stopped. 1: another thread already
+                    // owns it, so this one was a no-op and the server keeps running.
+                    if (rc == 0) {
+                        dashboardRunning = false;
+                    }
+                } catch (Throwable t) {
+                    Log.e(TAG, "Hermes dashboard stopped", t);
+                    dashboardRunning = false;
+                    dashboardError = messageOf(t);
+                }
+            });
+        }
 
         long deadline = System.currentTimeMillis() + READY_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
-            if (serverError != null) {
-                fail("Hermes failed to start: " + serverError);
+            String error = dashboardError;
+            if (error != null) {
+                fail("Hermes failed to start: " + error);
                 return;
             }
             if (isDashboardReady()) {
@@ -195,6 +216,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void showDashboard() {
+        // The poll thread can win the race against onDestroy(); never touch a dead WebView.
+        if (isDestroyed()) {
+            return;
+        }
         statusText.setText(R.string.loading_dashboard);
         progressBar.setVisibility(View.GONE);
         introPanel.setVisibility(View.GONE);
@@ -208,17 +233,26 @@ public class MainActivity extends AppCompatActivity {
 
     private void fail(String reason) {
         launching = false;
+        dashboardError = reason;
         Log.e(TAG, reason);
         runOnUiThread(() -> {
-            progressBar.setVisibility(View.GONE);
-            introPanel.setVisibility(View.VISIBLE);
-            webView.setVisibility(View.GONE);
-            statusText.setText(reason);
-            startButton.setText(R.string.retry);
-            startButton.setVisibility(View.VISIBLE);
-            startButton.setEnabled(true);
-            Toast.makeText(this, R.string.error_message, Toast.LENGTH_LONG).show();
+            if (isDestroyed()) {
+                return;
+            }
+            showFailure(reason);
         });
+    }
+
+    /** UI half of {@link #fail}: launch screen with the reason and a working Retry. */
+    private void showFailure(String reason) {
+        progressBar.setVisibility(View.GONE);
+        introPanel.setVisibility(View.VISIBLE);
+        webView.setVisibility(View.GONE);
+        statusText.setText(reason);
+        startButton.setText(R.string.retry);
+        startButton.setVisibility(View.VISIBLE);
+        startButton.setEnabled(true);
+        Toast.makeText(this, R.string.error_message, Toast.LENGTH_LONG).show();
     }
 
     private static String messageOf(Throwable t) {

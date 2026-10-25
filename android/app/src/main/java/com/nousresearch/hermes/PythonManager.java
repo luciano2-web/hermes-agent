@@ -48,10 +48,13 @@ public class PythonManager {
      *
      * Must be called from a background thread: uvicorn serves the request loop on
      * the calling thread.
+     *
+     * @return 0 once the server started by this call has stopped, 1 when another
+     *         thread already owns the running server (this call was a no-op).
      */
-    public static void startDashboard(File hermesHome, int port) {
+    public static int startDashboard(File hermesHome, int port) {
         PyObject bridge = getPython().getModule("hermes_android");
-        bridge.callAttr("start", hermesHome.getAbsolutePath(), port);
+        return bridge.callAttr("start", hermesHome.getAbsolutePath(), port).toInt();
     }
 
     public static Python getPython() {
@@ -63,12 +66,5 @@ public class PythonManager {
 
     public static boolean isPythonInitialized() {
         return isInitialized;
-    }
-
-    public static void shutdown() {
-        // The Chaquopy runtime lives for the whole process; only our handle to it is dropped.
-        pythonInstance = null;
-        isInitialized = false;
-        Log.i(TAG, "Python handle released");
     }
 }

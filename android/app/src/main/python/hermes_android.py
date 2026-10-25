@@ -12,13 +12,35 @@ from pathlib import Path
 
 DEFAULT_PORT = 9119
 
+# True while this interpreter's server thread owns the port. The Activity can be
+# recreated (rotation, relaunch from the launcher) while the server keeps running,
+# so a second call must not try to bind the same port again.
+_serving = False
+
 
 def start(home: str, port: int = DEFAULT_PORT) -> int:
     """Point HERMES_HOME at the app-private directory, then serve the dashboard.
 
     Blocks until the server stops. Any failure raises, which the Java side
     reports on the launch screen.
+
+    Returns 0 once the server started by this call has stopped, or 1 immediately
+    when another call already owns the running server.
     """
+    global _serving
+    if _serving:
+        return 1
+    _serving = True
+    try:
+        _serve(home, port)
+    except BaseException:
+        _serving = False
+        raise
+    _serving = False
+    return 0
+
+
+def _serve(home: str, port: int) -> None:
     home_path = Path(home)
     home_path.mkdir(parents=True, exist_ok=True)
 
@@ -52,4 +74,3 @@ def start(home: str, port: int = DEFAULT_PORT) -> int:
     ]
     args = parser.parse_args(argv)
     args.func(args)
-    return 0

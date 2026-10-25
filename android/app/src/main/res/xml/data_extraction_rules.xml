@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- What Android 12+ reads for cloud backup and device-to-device transfer.
+     Both sections are empty on purpose: HERMES_HOME carries the API keys from
+     .env, so no file of this app may leave the device. -->
 <data-extraction-rules>
-    <cloud-backup>
-        <include domain="sharedpref" path="." />
-    </cloud-backup>
+    <cloud-backup />
+    <device-transfer />
 </data-extraction-rules>

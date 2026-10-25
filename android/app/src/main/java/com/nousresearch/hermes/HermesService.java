@@ -52,15 +52,16 @@ public class HermesService extends Service {
 
     private void startForegroundWithServiceType() {
         Intent notificationIntent = new Intent(this, MainActivity.class);
+        // minSdk 24 is already past M (23), where FLAG_IMMUTABLE appeared.
         PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, notificationIntent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ?
-                        PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT
-        );
+                this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
 
+        // The system restarts a sticky service after killing the process, with no
+        // Python behind it: don't claim the runtime is up when it isn't.
+        boolean runtimeUp = PythonManager.isPythonInitialized();
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Hermes Agent")
-                .setContentText("Agent runtime is running")
+                .setContentText(runtimeUp ? "Agent runtime is running" : "Tap to start the agent")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)

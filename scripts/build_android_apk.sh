@@ -201,9 +201,22 @@ fi
 
 # Update version in build.gradle
 log "Updating version to $VERSION..."
-# versionCode must be a plain integer: keep the digits of the version only.
-VERSION_CODE="$(echo "$VERSION" | tr -cd '0-9')"
-[ -n "$VERSION_CODE" ] || VERSION_CODE=1
+# versionCode must be a positive 32-bit int (<= 2100000000). Concatenating the
+# digits of a date-stamped version like 1.0.0-202610251602 gives 15 digits, and
+# AGP rejects the build outright ("Value is null"). Use the digits only while
+# they fit; otherwise fall back to minutes since the epoch, which is monotonic
+# and stays valid until 2038.
+VERSION_DIGITS="$(echo "$VERSION" | tr -cd '0-9')"
+if [ -n "$VERSION_DIGITS" ] && [ "${#VERSION_DIGITS}" -le 10 ] \
+        && [ "$((10#$VERSION_DIGITS))" -gt 0 ] \
+        && [ "$((10#$VERSION_DIGITS))" -le 2100000000 ]; then
+    # $((...)) drops any leading zeros: Groovy reads "008" as an octal literal
+    # and would fail the build.
+    VERSION_CODE="$((10#$VERSION_DIGITS))"
+else
+    VERSION_CODE="$(( $(date +%s) / 60 ))"
+fi
+log "versionCode: $VERSION_CODE"
 sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" "$ANDROID_DIR/app/build.gradle"
 sed -i "s/versionName \"[^\"]*\"/versionName \"$VERSION\"/" "$ANDROID_DIR/app/build.gradle"
 

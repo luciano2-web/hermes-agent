@@ -81,9 +81,18 @@ jobs:
               VERSION="1.0.0-$(date +%Y%m%d%H%M)"
             fi
           fi
-          # versionCode must be a plain integer: keep the digits of the version only.
-          VERSION_CODE=$(echo "$VERSION" | tr -cd '0-9')
-          if [ -z "$VERSION_CODE" ]; then VERSION_CODE=1; fi
+          # versionCode must be a positive 32-bit int (<= 2100000000): the digits
+          # of a date-stamped version are 15 digits and make AGP reject the build,
+          # so keep them only while they fit, else use minutes since the epoch.
+          VERSION_DIGITS=$(echo "$VERSION" | tr -cd '0-9')
+          if [ -n "$VERSION_DIGITS" ] && [ "${#VERSION_DIGITS}" -le 10 ] \
+                  && [ "$((10#$VERSION_DIGITS))" -gt 0 ] \
+                  && [ "$((10#$VERSION_DIGITS))" -le 2100000000 ]; then
+            # $((...)) drops leading zeros: Groovy reads "008" as octal.
+            VERSION_CODE="$((10#$VERSION_DIGITS))"
+          else
+            VERSION_CODE="$(( $(date +%s) / 60 ))"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION (versionCode $VERSION_CODE)"

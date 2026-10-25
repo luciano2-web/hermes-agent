@@ -5,72 +5,82 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="24dp"
-    android:background="@color/colorBackground"
     tools:context=".MainActivity">
 
-    <LinearLayout
+    <!-- Scrollable so a long Python traceback can never push the Retry button off
+         the bottom of the screen. weight=1 so it fills the screen while it is the
+         visible panel, and lets the WebView take over once it is gone. -->
+    <ScrollView
         android:id="@+id/introPanel"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
 
-        <ImageView
-            android:layout_width="120dp"
-            android:layout_height="120dp"
-            android:src="@mipmap/ic_launcher"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="32dp"
-            android:contentDescription="Hermes Agent Logo" />
-
-        <TextView
-            android:id="@+id/statusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Hermes Agent"
-            android:textSize="24sp"
-            android:textColor="@color/colorText"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="16dp" />
-
-        <ProgressBar
-            android:id="@+id/progressBar"
-            style="@android:style/Widget.ProgressBar.Horizontal"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="8dp"
-            android:layout_marginBottom="32dp"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/startButton"
-            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/retry"
-            android:textSize="18sp"
-            android:visibility="gone"
-            android:enabled="false"
-            android:backgroundTint="@color/colorPrimary"
-            android:textColor="@color/colorBackground" />
+            android:orientation="vertical"
+            android:gravity="center">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/app_description"
-            android:textSize="14sp"
-            android:textColor="@color/colorText"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="16dp" />
+            <ImageView
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:src="@mipmap/ic_launcher"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="32dp"
+                android:contentDescription="@string/app_name" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="by Nous Research"
-            android:textSize="12sp"
-            android:textColor="@color/colorText"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="8dp" />
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textSize="24sp"
+                android:textColor="@color/colorText"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="16dp" />
 
-    </LinearLayout>
+            <ProgressBar
+                android:id="@+id/progressBar"
+                style="@android:style/Widget.ProgressBar.Horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_marginBottom="32dp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/startButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/retry"
+                android:textSize="18sp"
+                android:visibility="gone"
+                android:enabled="false"
+                android:backgroundTint="@color/colorPrimary"
+                android:textColor="@color/colorBackground" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_description"
+                android:textSize="14sp"
+                android:textColor="@color/colorText"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/byline"
+                android:textSize="12sp"
+                android:textColor="@color/colorText"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+
+    </ScrollView>
 
     <WebView
         android:id="@+id/webView"
