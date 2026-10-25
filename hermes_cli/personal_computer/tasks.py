@@ -361,7 +361,13 @@ class TaskRegistry:
                 (row["task_id"], ApprovalStatus.PENDING.value, approval_id),
             ).fetchone()[0]
             if remaining == 0:
-                next_task_status = TaskStatus.QUEUED if approved else TaskStatus.PAUSED
+                # A later approval must never override an earlier denial on the
+                # same task. Resume only when every approval was granted.
+                denied = db.execute(
+                    "SELECT COUNT(*) FROM pc_approvals WHERE task_id=? AND status=?",
+                    (row["task_id"], ApprovalStatus.DENIED.value),
+                ).fetchone()[0]
+                next_task_status = TaskStatus.PAUSED if denied else TaskStatus.QUEUED
                 task_row = db.execute(
                     "SELECT status FROM pc_tasks WHERE id=?", (row["task_id"],)
                 ).fetchone()
