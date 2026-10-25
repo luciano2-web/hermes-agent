@@ -11,6 +11,8 @@ import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -33,6 +35,7 @@ public class HermesPetOverlayService extends Service {
     private float downRawX, downRawY;
     private int downX, downY;
     private boolean moved;
+    private ObjectAnimator idleAnimation;
 
     @Override
     public void onCreate() {
@@ -118,6 +121,11 @@ public class HermesPetOverlayService extends Service {
 
         try {
             windowManager.addView(petView, layoutParams);
+            idleAnimation = ObjectAnimator.ofFloat(petView, View.TRANSLATION_Y, 0f, -7f, 0f);
+            idleAnimation.setDuration(1400);
+            idleAnimation.setRepeatCount(ValueAnimator.INFINITE);
+            idleAnimation.setRepeatMode(ValueAnimator.RESTART);
+            idleAnimation.start();
         } catch (RuntimeException error) {
             Toast.makeText(this, "No se pudo mostrar Hermes Pet: " + error.getMessage(),
                     Toast.LENGTH_LONG).show();
@@ -161,6 +169,10 @@ public class HermesPetOverlayService extends Service {
             } catch (IllegalArgumentException ignored) {
                 // Already detached.
             }
+        }
+        if (idleAnimation != null) {
+            idleAnimation.cancel();
+            idleAnimation = null;
         }
         petView = null;
         super.onDestroy();
