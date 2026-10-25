@@ -132,10 +132,13 @@ class TaskRegistry:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    idempotency_key TEXT UNIQUE,
+                    idempotency_key TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     last_error TEXT
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS pc_tasks_idempotency_scope
+                    ON pc_tasks(requester_id, source_channel, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS pc_tasks_status_updated
                     ON pc_tasks(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS pc_tasks_requester_created
@@ -209,7 +212,9 @@ class TaskRegistry:
             db.execute("BEGIN IMMEDIATE")
             if idempotency_key:
                 existing = db.execute(
-                    "SELECT * FROM pc_tasks WHERE idempotency_key=?", (idempotency_key,)
+                    """SELECT * FROM pc_tasks
+                    WHERE requester_id=? AND source_channel=? AND idempotency_key=?""",
+                    (required["requester_id"], required["source_channel"], idempotency_key),
                 ).fetchone()
                 if existing:
                     db.commit()
