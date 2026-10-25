@@ -86,6 +86,23 @@ def test_approval_is_pending_until_a_human_resolves_it(tmp_path):
     assert event_types[-1] == "status_changed"
 
 
+def test_later_approval_cannot_override_an_earlier_denial(tmp_path):
+    store = make_registry(tmp_path)
+    task = make_task(store)
+    first = store.request_approval(
+        task.id, action="send_email", summary="Send email", requested_by="hermes",
+    )
+    second = store.request_approval(
+        task.id, action="submit_form", summary="Submit form", requested_by="hermes",
+    )
+
+    store.resolve_approval(first.id, approved=False, resolved_by="user-1")
+    store.resolve_approval(second.id, approved=True, resolved_by="user-1")
+
+    assert store.get_task(task.id).status is TaskStatus.PAUSED
+    assert store.list_approvals(status=ApprovalStatus.DENIED)[0].id == first.id
+
+
 def test_approval_cannot_be_resolved_twice(tmp_path):
     store = make_registry(tmp_path)
     task = make_task(store)
