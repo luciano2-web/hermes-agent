@@ -39,6 +39,26 @@ def test_idempotency_key_prevents_duplicate_tasks(tmp_path):
     assert len(store.list_tasks()) == 1
 
 
+def test_idempotency_key_is_scoped_to_requester_and_channel(tmp_path):
+    store = make_registry(tmp_path)
+    first = store.create_task(
+        title="Private task A", prompt="A", requester_id="user-a",
+        source_channel="whatsapp", idempotency_key="message-123",
+    )
+    second = store.create_task(
+        title="Private task B", prompt="B", requester_id="user-b",
+        source_channel="whatsapp", idempotency_key="message-123",
+    )
+    third = store.create_task(
+        title="Private task C", prompt="C", requester_id="user-a",
+        source_channel="telegram", idempotency_key="message-123",
+    )
+
+    assert len({first.id, second.id, third.id}) == 3
+    assert store.get_task(first.id).requester_id == "user-a"
+    assert store.get_task(second.id).requester_id == "user-b"
+
+
 def test_status_transition_validation(tmp_path):
     store = make_registry(tmp_path)
     task = make_task(store)
