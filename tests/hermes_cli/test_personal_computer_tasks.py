@@ -60,7 +60,10 @@ def test_approval_is_pending_until_a_human_resolves_it(tmp_path):
         approval.id, approved=False, resolved_by="user-1", note="Needs revision",
     )
     assert denied.status is ApprovalStatus.DENIED
-    assert store.events(task.id)[-1].event_type == "approval_resolved"
+    assert store.get_task(task.id).status is TaskStatus.PAUSED
+    event_types = [event.event_type for event in store.events(task.id)]
+    assert "approval_resolved" in event_types
+    assert event_types[-1] == "status_changed"
 
 
 def test_approval_cannot_be_resolved_twice(tmp_path):
@@ -70,6 +73,7 @@ def test_approval_cannot_be_resolved_twice(tmp_path):
         task.id, action="submit_form", summary="Submit form", requested_by="hermes",
     )
     store.resolve_approval(approval.id, approved=True, resolved_by="user-1")
+    assert store.get_task(task.id).status is TaskStatus.QUEUED
     with pytest.raises(ValueError, match="already been resolved"):
         store.resolve_approval(approval.id, approved=False, resolved_by="user-1")
 
