@@ -350,6 +350,28 @@ class TaskRegistry:
                 "Approval approved" if approved else "Approval denied",
                 {"approval_id": approval_id, "resolved_by": resolved_by, "note": note},
             )
+            # Keep the task blocked while any other approval is still pending.
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM pc_approvals WHERE task_id=? AND status=? AND id<>?",
+                (row["task_id"], ApprovalStatus.PENDING.value, approval_id),
+            ).fetchone()[0]
+            if remaining == 0:
+                next_task_status = TaskStatus.QUEUED if approved else TaskStatus.PAUSED
+                task_row = db.execute(
+                    "SELECT status FROM pc_tasks WHERE id=?", (row["task_id"],)
+                ).fetchone()
+                current_task_status = TaskStatus(task_row["status"])
+                if current_task_status is TaskStatus.AWAITING_APPROVAL:
+                    db.execute(
+                        "UPDATE pc_tasks SET status=?,updated_at=? WHERE id=?",
+                        (next_task_status.value, now, row["task_id"]),
+                    )
+                    self._add_event(
+                        db, row["task_id"], "status_changed",
+                        f"Task status changed to {next_task_status.value}",
+                        {"from": current_task_status.value, "to": next_task_status.value,
+                         "actor_id": resolved_by, "approval_id": approval_id},
+                    )
             updated = db.execute("SELECT * FROM pc_approvals WHERE id=?", (approval_id,)).fetchone()
             db.commit()
             return self._approval(updated)
