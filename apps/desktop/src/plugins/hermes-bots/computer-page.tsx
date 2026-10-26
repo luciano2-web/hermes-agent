@@ -11,7 +11,8 @@ function botIsReachable(bot: RosterRow): boolean {
 
 /** First-class Computer page that reuses the existing Bot Desktop screen implementation. */
 export function ComputerPage() {
-  const { data: roster = [], isLoading, error } = useRoster()
+  const { data: snapshot, isLoading, error } = useRoster()
+  const roster = Array.isArray(snapshot?.profiles) ? snapshot.profiles : []
   const bots = [...roster].sort((a, b) => displayName(a, null).localeCompare(displayName(b, null)))
 
   return (
