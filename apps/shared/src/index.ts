@@ -61,6 +61,23 @@ export {
   DATA_URL_READ_MAX_MAX_MB,
   DATA_URL_READ_MIN_MAX_MB
 } from './data-url-read-max'
+export {
+  COMPUTER_CONNECTION_STATUSES,
+  COMPUTER_TASK_STATUSES,
+  computerActionRequiresApproval,
+  isComputerConnectionStatus,
+  isComputerTaskStatus,
+  safeComputerConnectionStatus,
+  safeComputerTaskStatus,
+  type ComputerActionKind,
+  type ComputerActionProposal,
+  type ComputerApprovalState,
+  type ComputerClientPlatform,
+  type ComputerConnectionStatus,
+  type ComputerTask,
+  type ComputerTaskStatus,
+  type ComputerWorkspace
+} from './computer-mode'
 export { compactNumber } from './format'
 export { type FuzzyMatch, fuzzyRank, fuzzyScore, fuzzyScoreMulti, type RankedItem } from './fuzzy'
 export * from './gateway-events'

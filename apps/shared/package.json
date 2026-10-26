@@ -10,6 +10,7 @@
     "./billing-policy": "./src/billing-policy.ts",
     "./charge-settlement": "./src/charge-settlement.ts",
     "./color": "./src/color.ts",
+    "./computer-mode": "./src/computer-mode.ts",
     "./format": "./src/format.ts",
     "./fuzzy": "./src/fuzzy.ts",
     "./gateway-events": "./src/gateway-events.ts",
