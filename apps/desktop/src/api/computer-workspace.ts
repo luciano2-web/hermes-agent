@@ -46,11 +46,11 @@ export async function getComputerTasks(
   const query = new URLSearchParams()
   if (options.status) query.set('status', options.status)
   if (options.limit !== undefined) query.set('limit', String(options.limit))
-  const suffix = query.size ? \`?\${query.toString()}\` : ''
+  const suffix = query.size ? `?${query.toString()}` : ''
   const result = await hermesApi<{ tasks: ComputerTask[] }>({
     ...profileScoped(options.profile),
     ...connectionScoped(),
-    path: \`/api/computer/tasks\${suffix}\`
+    path: `/api/computer/tasks${suffix}`
   })
   return result.tasks ?? []
 }
@@ -76,7 +76,7 @@ export async function getComputerTask(
   const result = await hermesApi<{ task: ComputerTask }>({
     ...profileScoped(options.profile),
     ...connectionScoped(),
-    path: \`/api/computer/tasks/\${encodeURIComponent(taskId)}\`
+    path: `/api/computer/tasks/${encodeURIComponent(taskId)}`
   })
   return result.task
 }
@@ -89,7 +89,7 @@ export async function transitionComputerTask(
   const result = await hermesApi<{ task: ComputerTask }>({
     ...profileScoped(options.profile),
     ...connectionScoped(),
-    path: \`/api/computer/tasks/\${encodeURIComponent(taskId)}/transition\`,
+    path: `/api/computer/tasks/${encodeURIComponent(taskId)}/transition`,
     method: 'POST',
     body: { status, message: options.message, event_data: options.event_data }
   })
@@ -104,7 +104,7 @@ export async function appendComputerTaskEvent(
   const result = await hermesApi<{ events: ComputerTaskEvent[] }>({
     ...profileScoped(options.profile),
     ...connectionScoped(),
-    path: \`/api/computer/tasks/\${encodeURIComponent(taskId)}/events\`,
+    path: `/api/computer/tasks/${encodeURIComponent(taskId)}/events`,
     method: 'POST',
     body: event
   })
