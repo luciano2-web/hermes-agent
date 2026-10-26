@@ -71,7 +71,7 @@ export function ComputerPage() {
             <article key={`${bot.connectionId ?? connectionId ?? 'local'}:${bot.name}`} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  <Codicon name="browser" size="1.1rem" />
+                  <Codicon name="device-desktop" size="1.1rem" />
                 </div>
                 <div className="min-w-0">
                   <h2 className="truncate font-medium">{label}</h2>
