@@ -206,3 +206,19 @@ export {
   type ResolveGatewayWsUrlDeps,
   type WebSocketAuthParam
 } from './websocket-url'
+
+export {
+  canExecuteComputerAction,
+  canTransitionComputerTask,
+  isComputerTaskTerminal,
+  requiresComputerApproval,
+  transitionComputerTask,
+  type ComputerActionRisk,
+  type ComputerApprovalRequest,
+  type ComputerApprovalStatus,
+  type ComputerEvent,
+  type ComputerTask,
+  type ComputerTaskStatus,
+  type ComputerWorkspaceProfile,
+  type PersonalComputerPlatform
+} from './personal-computer'
