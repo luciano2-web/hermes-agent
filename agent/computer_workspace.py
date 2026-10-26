@@ -10,11 +10,12 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 TaskStatus = Literal[
     "queued", "running", "awaiting_approval", "paused",
@@ -73,12 +74,16 @@ class ComputerWorkspaceStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys = ON")
-        db.execute("PRAGMA busy_timeout = 10000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("PRAGMA busy_timeout = 10000")
+            yield db
+        finally:
+            db.close()
 
     def _initialize(self) -> None:
         with self._lock, self._connect() as db:
