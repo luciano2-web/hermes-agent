@@ -82,3 +82,18 @@ def test_denied_approval_cannot_be_bypassed_by_status_transition(tmp_path):
 
     retry = store.request_approval(task.id, "Ask the user again after revising the draft")
     assert retry.status is TaskStatus.AWAITING_APPROVAL
+
+
+
+def test_pending_approval_cannot_be_bypassed_after_pause(tmp_path):
+    store = ComputerTaskStore(tmp_path / "tasks.sqlite3")
+    task = store.create_task("Submit a form")
+    store.transition(task.id, TaskStatus.RUNNING)
+    store.request_approval(task.id, "Submitting affects an external service")
+    store.transition(task.id, TaskStatus.PAUSED)
+
+    with pytest.raises(InvalidTaskTransition):
+        store.transition(task.id, TaskStatus.RUNNING)
+
+    approved = store.resolve_approval(task.id, approved=True, detail="Approved while paused")
+    assert approved.status is TaskStatus.RUNNING
