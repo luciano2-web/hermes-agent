@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 def _now() -> str:
@@ -90,8 +91,18 @@ class ComputerTaskStore:
         db.execute("PRAGMA foreign_keys = ON")
         return db
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit/rollback each unit of work and always close its connection."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     def _initialize(self) -> None:
-        with self._connect() as db:
+        with self._connection() as db:
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS computer_tasks (
@@ -151,7 +162,7 @@ class ComputerTaskStore:
             raise ValueError("source must not be empty")
         now = _now()
         task_id = task_id or str(uuid.uuid4())
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute(
                 """INSERT INTO computer_tasks
                    (id, prompt, source, status, created_at, updated_at)
@@ -165,14 +176,14 @@ class ComputerTaskStore:
         return task
 
     def get_task(self, task_id: str) -> ComputerTask | None:
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("SELECT * FROM computer_tasks WHERE id = ?", (task_id,)).fetchone()
         return self._task(row)
 
     def list_tasks(self, limit: int = 50) -> list[ComputerTask]:
         if not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500")
-        with self._connect() as db:
+        with self._connection() as db:
             rows = db.execute(
                 "SELECT * FROM computer_tasks ORDER BY updated_at DESC, id LIMIT ?", (limit,)
             ).fetchall()
@@ -188,7 +199,7 @@ class ComputerTaskStore:
     ) -> ComputerTask:
         if not isinstance(status, TaskStatus):
             status = TaskStatus(status)
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("SELECT * FROM computer_tasks WHERE id = ?", (task_id,)).fetchone()
             task = self._task(row)
             if task is None:
@@ -212,7 +223,7 @@ class ComputerTaskStore:
         reason = reason.strip()
         if not reason:
             raise ValueError("approval reason must not be empty")
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("SELECT * FROM computer_tasks WHERE id = ?", (task_id,)).fetchone()
             task = self._task(row)
             if task is None:
@@ -233,7 +244,7 @@ class ComputerTaskStore:
         return task
 
     def resolve_approval(self, task_id: str, *, approved: bool, detail: str = "") -> ComputerTask:
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("SELECT * FROM computer_tasks WHERE id = ?", (task_id,)).fetchone()
             task = self._task(row)
             if task is None:
@@ -255,7 +266,7 @@ class ComputerTaskStore:
         return task
 
     def list_events(self, task_id: str) -> list[TaskEvent]:
-        with self._connect() as db:
+        with self._connection() as db:
             exists = db.execute("SELECT 1 FROM computer_tasks WHERE id = ?", (task_id,)).fetchone()
             if exists is None:
                 raise KeyError(f"unknown task: {task_id}")
