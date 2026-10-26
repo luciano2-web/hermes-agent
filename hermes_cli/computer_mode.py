@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator
 
 
 def _now() -> str:
