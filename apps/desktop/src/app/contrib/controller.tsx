@@ -121,6 +121,7 @@ import { TermsButterbar } from '../shell/terms-butterbar'
 import { BASIC_TREE, DEFAULT_TREE, registerLayoutPresets } from './layout-presets'
 import { bindLayoutSides } from './layout-sides'
 import { FilesPane, LogsPane, ReviewPaneContent } from './panes'
+import { ComputerPane } from '../computer'
 import { ContribWiring, WiredPane } from './wiring'
 import { WorkspacePageHeaderHostContext } from './workspace-page-header'
 
@@ -668,6 +669,55 @@ registerPaneCloser('logs', () => $logsOpen.set(false))
 registerPaneOpener('logs', () => $logsOpen.set(true))
 syncLogsPane($logsOpen.get())
 $logsOpen.listen(syncLogsPane)
+
+// Personal Computer workspace: summon-only like Logs, but docked beside the
+// active chat. It reuses the existing terminal and Browser preview surfaces.
+const $computerOpen = atom(false)
+let unregisterComputerPane: (() => void) | null = null
+
+const syncComputerPane = (open: boolean) => {
+  if (open) {
+    unregisterComputerPane ??= registry.register({
+      id: 'computer',
+      area: 'panes',
+      title: 'Computer',
+      data: {
+        placement: 'right',
+        dock: { pane: 'workspace', pos: 'right' },
+        width: FILE_BROWSER_DEFAULT_WIDTH,
+        minWidth: FILE_BROWSER_MIN_WIDTH,
+        maxWidth: FILE_BROWSER_MAX_WIDTH,
+        tabTitle: () => 'Computer',
+        tabTitleText: () => 'Computer'
+      },
+      render: () => idle(<ComputerPane />)
+    })
+    revealTreePane('computer')
+  } else {
+    unregisterComputerPane?.()
+    unregisterComputerPane = null
+    const tree = $layoutTree.get()
+    if (tree && allPaneIds(tree).includes('computer')) {
+      removeTreePane('computer')
+    }
+  }
+}
+
+registerPaneCloser('computer', () => $computerOpen.set(false))
+registerPaneOpener('computer', () => $computerOpen.set(true))
+syncComputerPane($computerOpen.get())
+$computerOpen.listen(syncComputerPane)
+
+registry.register(
+  paletteToggle({
+    id: 'computer.toggle',
+    label: 'Computer workspace',
+    icon: LayoutDashboard,
+    keywords: ['computer', 'browser', 'desktop', 'workspace', 'mouse', 'visual agent'],
+    get: () => $computerOpen.get(),
+    set: enabled => $computerOpen.set(enabled)
+  })
+)
 
 registry.register(
   paletteToggle({
