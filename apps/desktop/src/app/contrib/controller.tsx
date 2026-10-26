@@ -44,6 +44,7 @@ import {
   Download,
   FileText,
   LayoutDashboard,
+  MonitorPlay,
   PanelBottom,
   PanelTop,
   SlidersHorizontal,
@@ -113,6 +114,7 @@ import {
 import { AppContextMenu } from '../context-menu/app-context-menu'
 import { HudShell } from '../hud/hud-shell'
 import { $terminalTakeover, setTerminalTakeover } from '../right-sidebar/store'
+import { openBrowserTab } from '@/store/preview'
 import { terminalPaletteToggle } from '../right-sidebar/terminal/reveal-focus'
 import { $workspaceIsPage, WORKSPACE_PAGE_HEADER_AREA } from '../routes'
 import { Butterbar } from '../shell/butterbar'
@@ -425,6 +427,17 @@ registry.registerMany([
       icon: Upload,
       keywords: ['profile', 'export', 'share', 'bundle', 'theme', 'settings', 'backup'],
       run: () => void runExportProfileFlow()
+    } satisfies PaletteContribution
+  },
+  {
+    id: 'computer.open',
+    area: PALETTE_AREA,
+    data: {
+      id: 'computer.open',
+      label: 'Open Computer',
+      icon: MonitorPlay,
+      keywords: ['computer', 'browser', 'chromium', 'mouse', 'visual', 'web', 'navigate'],
+      run: () => openBrowserTab()
     } satisfies PaletteContribution
   },
   {
