@@ -67,3 +67,18 @@ def test_empty_prompt_and_unknown_task_are_rejected(tmp_path):
 
     with pytest.raises(KeyError):
         store.transition("missing", TaskStatus.RUNNING)
+
+
+
+def test_denied_approval_cannot_be_bypassed_by_status_transition(tmp_path):
+    store = ComputerTaskStore(tmp_path / "tasks.sqlite3")
+    task = store.create_task("Send a message")
+    store.transition(task.id, TaskStatus.RUNNING)
+    store.request_approval(task.id, "Sending is an external side effect")
+    store.resolve_approval(task.id, approved=False)
+
+    with pytest.raises(InvalidTaskTransition):
+        store.transition(task.id, TaskStatus.RUNNING)
+
+    retry = store.request_approval(task.id, "Ask the user again after revising the draft")
+    assert retry.status is TaskStatus.AWAITING_APPROVAL
