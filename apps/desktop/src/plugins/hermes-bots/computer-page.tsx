@@ -1,4 +1,4 @@
-import { Button, Codicon, host, useValue } from '@hermes/plugin-sdk'
+import { Button, Codicon } from '@hermes/plugin-sdk'
 
 import { useRoster } from './data'
 import { displayName } from './labels'
@@ -12,7 +12,6 @@ function botIsReachable(bot: RosterRow): boolean {
 /** First-class Computer page that reuses the existing Bot Desktop screen implementation. */
 export function ComputerPage() {
   const { data: roster = [], isLoading, error } = useRoster()
-  const connectionId = useValue(host.state.connectionId)
   const bots = [...roster].sort((a, b) => displayName(a, null).localeCompare(displayName(b, null)))
 
   return (
@@ -76,7 +75,7 @@ export function ComputerPage() {
                 <div className="min-w-0">
                   <h2 className="truncate font-medium">{label}</h2>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {bot.connectionLabel || bot.connectionId || 'Current gateway'}
+                    {bot.connectionLabel || bot.connectionId || 'Gateway profile'}
                     {bot.ghost || bot.sourceMissing || bot.sourceReachable === false ? ' · Offline' : ' · Profile desktop'}
                   </p>
                   {bot.description && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{bot.description}</p>}
