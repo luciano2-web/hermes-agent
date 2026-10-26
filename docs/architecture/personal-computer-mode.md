@@ -137,11 +137,11 @@ Official references:
 
 ## Revised implementation roadmap
 
-### Milestone 1 — verify and expose existing computer/browser tools
-- Audit the desktop route structure, preload bridge, gateway RPC methods, toolset registration, and current fork base.
-- Add a Computer entry to the existing desktop navigation that shows truthful connection/session state.
-- Reuse the existing computer_use/browser tools where available; do not introduce a parallel driver until tests show a concrete gap.
-- Acceptance: one desktop end-to-end test launches or attaches to a supported browser, shows its status and a screenshot/session view, and can safely perform a harmless navigation task.
+### Milestone 1 — finish the existing desktop screen integration
+- Audit `screen-pane.tsx`, `screen-connection.ts`, `screen-portal.tsx`, gateway `display.*` methods, lease semantics, and the current fork base.
+- Preserve the existing Bots → Screen UI and its single-use tickets/lease-aware input filtering; fix concrete gaps found by tests rather than duplicating it.
+- Verify the browser icon and agent use the same Chromium executable and persistent profile for a given Hermes profile.
+- Acceptance: desktop end-to-end tests verify view, takeover/hand-back, reconnect, and that an observer cannot inject keyboard/mouse input.
 
 ### Milestone 2 — task registry and approval inbox
 - Add a versioned task model and persistent store behind the existing gateway/backend.
@@ -155,10 +155,12 @@ Official references:
 - Deliver progress, overdue-work alerts, and approval requests through configured channels.
 - Acceptance: a task started in one channel can be inspected from desktop and a second configured channel without duplicating execution.
 
-### Milestone 4 — Android companion and platform matrix
-- Add the same task list, approvals, notifications, and remote Computer view to Android only after defining a supported API/transport.
-- Keep the Termux CLI working as-is; it does not need to host a full graphical desktop locally.
-- Test macOS, Windows, Linux, Android, and Termux separately and document unsupported combinations.
+### Milestone 4 — mobile use, then native Android companion
+- **Mobile use is a first-class requirement.** First extract/reuse the existing screen connection contract (authenticated `display.*` RPC, single-use viewer ticket, RFB WebSocket, lease events) in a mobile-friendly shared viewer or responsive web client.
+- Add touch-to-pointer mapping, pinch/viewport scaling, on-screen keyboard, reconnect, status, approvals, and notifications. Viewer disconnect must not stop the task or shared terminal environment.
+- Then connect the native Android APK to the same API/transport. The APK currently is an experimental shell and its README says the full agent dependency set is not bundled; do not assume local execution works before build/device tests.
+- Keep Termux as the CLI, and keep the existing desktop app as the full desktop client; do not force a graphical desktop into Termux.
+- Test macOS, Windows, Linux, mobile web, Android APK, and Termux separately and document unsupported combinations.
 
 ### Milestone 5 — upstream contribution strategy
 - Split the work into small PRs: (1) audited/reusable computer-use integration, (2) desktop Computer view, (3) task/approval API, (4) messaging continuity, (5) Android companion.
@@ -193,7 +195,7 @@ The existing `tools.bot_desktop` code already implements a Linux Xfce desktop pe
 
 ### Mobile acceptance tests
 
-- A phone/tablet can connect to a paired gateway over an authenticated transport and see the same running desktop as Desktop.
+- A phone/tablet can connect to a paired gateway over an authenticated transport and see the same running desktop as Desktop. The first target is a responsive/mobile-friendly client that reuses the existing `display.*` and RFB bridge; the native APK follows once its remote-client transport is tested.
 - Tap, drag, scroll, and on-screen keyboard input reach the intended remote screen, with visible feedback and no accidental host-device input.
 - Disconnecting the phone only disconnects the viewer; it does not kill the agent task or its shared terminal environment.
 - Reconnection resumes the same task/session IDs.
