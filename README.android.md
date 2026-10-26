@@ -58,6 +58,10 @@ Configure these repository Actions secrets first:
 
 The workflow builds the release APK from source and fails if signing credentials are missing; it must never relabel or upload a debug APK as a signed release. Keep the keystore and passwords out of the repository and logs. A signed APK still does not mean the full Hermes Python package is bundled or functional on Android.
 
+## Personal Computer Mode status
+
+The planned Computer workspace is not available in this APK yet. The existing desktop app already has a browser preview and desktop Computer Use integration, but the CUA driver targets macOS, Windows, and Linux—not Android. The first Android version should pair securely with a Hermes gateway/worker and display the same tasks, browser view, and approvals remotely. It must not claim to control Android's own desktop or bundle the full Hermes runtime until that is implemented and tested.
+
 ## Android limitations
 
 - Android may pause or terminate background processes to save battery. A terminal session is not a guarantee of continuous 24/7 execution.
