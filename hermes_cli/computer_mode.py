@@ -61,7 +61,7 @@ _ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
         TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED, TaskStatus.COMPLETED,
         TaskStatus.FAILED, TaskStatus.CANCELLED,
     }),
-    TaskStatus.AWAITING_APPROVAL: frozenset({TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.CANCELLED}),
+    TaskStatus.AWAITING_APPROVAL: frozenset({TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.CANCELLED}),
     TaskStatus.PAUSED: frozenset({TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.FAILED}),
     TaskStatus.FAILED: frozenset({TaskStatus.QUEUED, TaskStatus.CANCELLED}),
     TaskStatus.COMPLETED: frozenset(),
@@ -78,9 +78,10 @@ class ComputerTaskStore:
 
     def __init__(self, database_path: str | Path):
         raw_path = str(database_path)
-        self.database_path = raw_path if raw_path == ":memory:" else str(Path(raw_path).expanduser())
-        if self.database_path != ":memory:":
-            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        if raw_path == ":memory:":
+            raise ValueError("ComputerTaskStore requires a persistent database file path")
+        self.database_path = str(Path(raw_path).expanduser())
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -192,6 +193,8 @@ class ComputerTaskStore:
             task = self._task(row)
             if task is None:
                 raise KeyError(f"unknown task: {task_id}")
+            if task.approval_state == "denied" and status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+                raise InvalidTaskTransition("a denied action must be approved again before the task can resume")
             if status not in _ALLOWED_TRANSITIONS[task.status]:
                 raise InvalidTaskTransition(f"{task.status.value} -> {status.value} is not allowed")
             now = _now()
@@ -214,8 +217,9 @@ class ComputerTaskStore:
             task = self._task(row)
             if task is None:
                 raise KeyError(f"unknown task: {task_id}")
-            if task.status is not TaskStatus.RUNNING:
-                raise InvalidTaskTransition("approval can only be requested for a running task")
+            retrying_denied_request = task.status is TaskStatus.PAUSED and task.approval_state == "denied"
+            if task.status is not TaskStatus.RUNNING and not retrying_denied_request:
+                raise InvalidTaskTransition("approval can only be requested for a running task or a paused task with a denied request")
             now = _now()
             db.execute(
                 """UPDATE computer_tasks SET status = ?, approval_state = 'pending',
