@@ -269,3 +269,10 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 MIT — see [LICENSE](../../LICENSE).
 
 Built by [Nous Research](https://nousresearch.com).
+
+## Computer workspace (experimental)
+
+The fork is introducing a **Computer workspace** that connects the existing chat, browser preview, and terminal instead of creating a second isolated shell. In the current first slice, open the command palette and choose **Computer workspace**; use **Open browser** to create a browser tab in the existing preview system, or **Show terminal** to reveal the existing terminal pane.
+
+This is an early desktop integration, not yet a complete always-on computer agent. Persistent tasks, proactive reminders, cross-device task continuity, and the Android client are not implemented by this pane. Track the intended architecture and acceptance criteria in [Personal Computer Mode](../../docs/architecture/personal-computer-mode.md). Do not describe the feature as cross-platform or fully autonomous until the backend contract and platform end-to-end tests exist.
+
