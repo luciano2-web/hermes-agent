@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -71,6 +71,7 @@ class PersonalComputerTask:
     def from_row(cls, row: sqlite3.Row) -> "PersonalComputerTask":
         data = dict(row)
         data["status"] = TaskStatus(data["status"])
+        data["approval_required"] = bool(data["approval_required"])
         data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
         return cls(**data)
 
