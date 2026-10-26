@@ -77,9 +77,10 @@ class ComputerTaskStore:
     """
 
     def __init__(self, database_path: str | Path):
-        self.database_path = str(database_path)
+        raw_path = str(database_path)
+        self.database_path = raw_path if raw_path == ":memory:" else str(Path(raw_path).expanduser())
         if self.database_path != ":memory:":
-            Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
