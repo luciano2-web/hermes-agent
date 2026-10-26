@@ -204,6 +204,8 @@ class ComputerTaskStore:
             task = self._task(row)
             if task is None:
                 raise KeyError(f"unknown task: {task_id}")
+            if task.approval_state == "pending" and status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+                raise InvalidTaskTransition("a pending approval must be resolved before the task can resume")
             if task.approval_state == "denied" and status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
                 raise InvalidTaskTransition("a denied action must be approved again before the task can resume")
             if status not in _ALLOWED_TRANSITIONS[task.status]:
@@ -249,7 +251,7 @@ class ComputerTaskStore:
             task = self._task(row)
             if task is None:
                 raise KeyError(f"unknown task: {task_id}")
-            if task.status is not TaskStatus.AWAITING_APPROVAL or task.approval_state != "pending":
+            if task.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED} or task.approval_state != "pending":
                 raise InvalidTaskTransition("task has no pending approval")
             new_status = TaskStatus.RUNNING if approved else TaskStatus.PAUSED
             decision = "approved" if approved else "denied"
