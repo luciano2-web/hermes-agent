@@ -78,7 +78,12 @@ _CAPABILITY_ENDPOINTS = (
     ("session_fork", ("POST", "/api/sessions/{session_id}/fork")),
     ("session_chat", ("POST", "/api/sessions/{session_id}/chat")),
     ("session_chat_stream", ("POST", "/api/sessions/{session_id}/chat/stream")),
-    ("session_model_lock", ("POST", "/api/sessions/{session_id}/model")))
+    ("session_model_lock", ("POST", "/api/sessions/{session_id}/model")),
+    ("computer_tasks", ("GET", "/api/computer/tasks")),
+    ("computer_task_create", ("POST", "/api/computer/tasks")),
+    ("computer_task", ("GET", "/api/computer/tasks/{task_id}")),
+    ("computer_task_transition", ("POST", "/api/computer/tasks/{task_id}/transition")),
+    ("computer_task_events", ("POST", "/api/computer/tasks/{task_id}/events")))
 
 
 def _approval_event_choices(*, smart_denied: bool, allow_session: bool, allow_permanent: bool) -> list[str]:
@@ -1598,7 +1603,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             ("DELETE", "/api/jobs/{job_id}", self._handle_delete_job),
             ("POST", "/api/jobs/{job_id}/pause", self._handle_pause_job),
             ("POST", "/api/jobs/{job_id}/resume", self._handle_resume_job),
-            ("POST", "/api/jobs/{job_id}/run", self._handle_run_job)]
+            ("POST", "/api/jobs/{job_id}/run", self._handle_run_job),
+            ("GET", "/api/computer/tasks", self._handle_list_computer_tasks),
+            ("POST", "/api/computer/tasks", self._handle_create_computer_task),
+            ("GET", "/api/computer/tasks/{task_id}", self._handle_get_computer_task),
+            ("POST", "/api/computer/tasks/{task_id}/transition", self._handle_transition_computer_task),
+            ("POST", "/api/computer/tasks/{task_id}/events", self._handle_append_computer_task_event)]
         routes.extend(_room_grants._http_routes(self))
         routes.extend(_api_runs._http_routes(self))
         if _CRON_AVAILABLE:
@@ -3288,6 +3298,140 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             {"object": "hermes.session.model_lock", "session_id": session_id, "runtime": runtime})
 
     # -- Cron jobs API ----------------------------------------------------------------
+
+
+    # -- Personal Computer workspace task ledger ------------------------------------
+    # These authenticated endpoints expose durable task state to desktop/mobile
+    # clients. They orchestrate no shell/browser action themselves: execution
+    # continues to use the existing terminal and computer_use backends.
+    def _computer_workspace_guard(self, request: web.Request) -> Optional[web.Response]:
+        return self._check_auth(request)
+
+    @staticmethod
+    def _computer_task_payload(task) -> dict[str, Any]:
+        return {
+            "id": task.id, "request_key": task.request_key, "channel": task.channel,
+            "requester_id": task.requester_id, "title": task.title, "summary": task.summary,
+            "status": task.status, "created_at": task.created_at, "updated_at": task.updated_at,
+            "metadata": task.metadata,
+        }
+
+    @staticmethod
+    def _computer_workspace_store():
+        from agent.computer_workspace import ComputerWorkspaceStore
+        return ComputerWorkspaceStore()
+
+    async def _handle_list_computer_tasks(self, request: web.Request) -> web.Response:
+        auth_err = self._computer_workspace_guard(request)
+        if auth_err:
+            return auth_err
+        try:
+            raw_limit = request.query.get("limit", "100")
+            limit = int(raw_limit)
+            status = request.query.get("status") or None
+            tasks = self._computer_workspace_store().list_tasks(status=status, limit=limit)
+            return web.json_response({"tasks": [self._computer_task_payload(task) for task in tasks]})
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Personal Computer task listing failed")
+            return web.json_response({"error": "Could not list computer tasks"}, status=500)
+
+    async def _handle_create_computer_task(self, request: web.Request) -> web.Response:
+        auth_err = self._computer_workspace_guard(request)
+        if auth_err:
+            return auth_err
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "Expected a JSON object"}, status=400)
+            for field in ("channel", "requester_id", "title"):
+                if not isinstance(body.get(field), str) or not body[field].strip():
+                    return web.json_response({"error": f"{field} must be a non-empty string"}, status=400)
+            for field, max_length in (("channel", 80), ("requester_id", 200), ("title", 300), ("summary", 4000)):
+                value = body.get(field, "")
+                if not isinstance(value, str) or len(value) > max_length:
+                    return web.json_response({"error": f"{field} must be a string of at most {max_length} characters"}, status=400)
+            metadata = body.get("metadata") or {}
+            if not isinstance(metadata, dict) or len(json.dumps(metadata, ensure_ascii=False)) > 8000:
+                return web.json_response({"error": "metadata must be a JSON object no larger than 8 KB"}, status=400)
+            request_key = body.get("request_key")
+            if request_key is not None and (not isinstance(request_key, str) or len(request_key) > 300):
+                return web.json_response({"error": "request_key must be a string of at most 300 characters"}, status=400)
+            task = self._computer_workspace_store().create_task(
+                channel=body["channel"], requester_id=body["requester_id"], title=body["title"],
+                summary=body.get("summary", ""), request_key=request_key, metadata=metadata,
+            )
+            return web.json_response({"task": self._computer_task_payload(task)}, status=201)
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Personal Computer task creation failed")
+            return web.json_response({"error": "Could not create computer task"}, status=500)
+
+    async def _handle_get_computer_task(self, request: web.Request) -> web.Response:
+        auth_err = self._computer_workspace_guard(request)
+        if auth_err:
+            return auth_err
+        try:
+            task = self._computer_workspace_store().get_task(request.match_info["task_id"])
+            return web.json_response({"task": self._computer_task_payload(task)})
+        except LookupError:
+            return web.json_response({"error": "Computer task not found"}, status=404)
+        except Exception:
+            logger.exception("Personal Computer task lookup failed")
+            return web.json_response({"error": "Could not read computer task"}, status=500)
+
+    async def _handle_transition_computer_task(self, request: web.Request) -> web.Response:
+        auth_err = self._computer_workspace_guard(request)
+        if auth_err:
+            return auth_err
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("status"), str):
+                return web.json_response({"error": "status is required"}, status=400)
+            message = body.get("message", "")
+            event_data = body.get("event_data") or {}
+            if not isinstance(message, str) or len(message) > 2000:
+                return web.json_response({"error": "message must be a string of at most 2000 characters"}, status=400)
+            if not isinstance(event_data, dict) or len(json.dumps(event_data, ensure_ascii=False)) > 8000:
+                return web.json_response({"error": "event_data must be a JSON object no larger than 8 KB"}, status=400)
+            task = self._computer_workspace_store().transition(
+                request.match_info["task_id"], body["status"], message=message, event_data=event_data,
+            )
+            return web.json_response({"task": self._computer_task_payload(task)})
+        except LookupError:
+            return web.json_response({"error": "Computer task not found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Personal Computer task transition failed")
+            return web.json_response({"error": "Could not update computer task"}, status=500)
+
+    async def _handle_append_computer_task_event(self, request: web.Request) -> web.Response:
+        auth_err = self._computer_workspace_guard(request)
+        if auth_err:
+            return auth_err
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("kind"), str) or not body["kind"].strip():
+                return web.json_response({"error": "kind is required"}, status=400)
+            message = body.get("message", "")
+            data = body.get("data") or {}
+            if not isinstance(message, str) or len(message) > 2000:
+                return web.json_response({"error": "message must be a string of at most 2000 characters"}, status=400)
+            if not isinstance(data, dict) or len(json.dumps(data, ensure_ascii=False)) > 8000:
+                return web.json_response({"error": "data must be a JSON object no larger than 8 KB"}, status=400)
+            store = self._computer_workspace_store()
+            store.append_event(request.match_info["task_id"], body["kind"], message=message, data=data)
+            return web.json_response({"events": store.list_events(request.match_info["task_id"])})
+        except LookupError:
+            return web.json_response({"error": "Computer task not found"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Personal Computer task event append failed")
+            return web.json_response({"error": "Could not append computer task event"}, status=500)
 
     _JOB_ID_RE = re.compile(r"[a-f0-9]{12}")
     # Update whitelist — prevents clients injecting arbitrary keys.
