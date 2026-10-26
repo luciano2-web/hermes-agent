@@ -174,6 +174,33 @@ Official references:
 - Provide pause, cancel, revoke-access, and audit-history controls.
 - Never send a drafted email or message merely because the agent prepared it.
 
+
+## Mobile use is a first-class requirement
+
+Mobile is not a later afterthought and does not mean trying to run a full Linux graphical desktop inside Android. The Android app (or a responsive mobile client where that is more practical) must be able to:
+
+- Open the same **Computer** section and same persistent task IDs as Desktop.
+- See the remote desktop/browser live, including visible cursor movement, and send touch gestures as pointer/keyboard input when connected.
+- Read task progress and audit events; approve or reject an action; pause/cancel work; disconnect the viewer without killing the task.
+- Receive opt-in notifications for attention needed, task completion, and approval requests.
+- Reconnect after network loss without creating a duplicate task or launching a second computer session.
+
+### Runtime model
+
+The computer runs on the configured Hermes execution host/terminal backend; the phone is a viewer/controller. The client must not silently create a second terminal environment. In particular, the existing `tools.bot_desktop.placement` policy resolves whether the desktop belongs on the gateway host or a supported terminal backend. Preserve that policy and report `refused` clearly for backends that cannot host a graphical stream; do not quietly escape the selected execution boundary.
+
+The existing `tools.bot_desktop` code already implements a Linux Xfce desktop per Hermes profile, an RFB Unix socket, profile-specific state, and a Chromium profile shared between the dock's Browser icon and the agent. That is a useful starting point for the visible computer, but the code audit alone does not prove that an authenticated mobile RFB/WebSocket viewer or a complete Computer UI exists. Build that transport deliberately; never expose the raw RFB socket or unauthenticated remote-debugging port to the public internet.
+
+### Mobile acceptance tests
+
+- A phone/tablet can connect to a paired gateway over an authenticated transport and see the same running desktop as Desktop.
+- Tap, drag, scroll, and on-screen keyboard input reach the intended remote screen, with visible feedback and no accidental host-device input.
+- Disconnecting the phone only disconnects the viewer; it does not kill the agent task or its shared terminal environment.
+- Reconnection resumes the same task/session IDs.
+- Unauthorized clients cannot view the screen, read session state, or send input.
+- A task awaiting approval remains blocked until an authorized user approves it.
+- The feature degrades honestly when the chosen backend cannot provide a graphical stream.
+
 ## Status
 
 The repository audit confirms reusable architecture and existing browser/computer-use documentation. It does not prove the fork's GUI currently exposes every computer-use feature, and it does not mean the new Computer view, persistent task registry, or proactive workflow has been implemented. Those require code changes and end-to-end tests.
