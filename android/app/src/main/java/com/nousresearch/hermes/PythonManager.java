@@ -63,8 +63,4 @@ public class PythonManager {
         }
         return pythonInstance;
     }
-
-    public static boolean isPythonInitialized() {
-        return isInitialized;
-    }
 }

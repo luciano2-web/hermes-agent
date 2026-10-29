@@ -2,20 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The only four this app uses: sockets are plain Python calls, the service keeps
+         the runtime alive, and Android 13+ gates its notification. No storage or wake
+         lock permission is used — every Hermes path is app-private storage — and a
+         library that needs one merges it in from its own manifest. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- Android 13+: notification that announces the background agent service. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Only relevant below Android 10; all Hermes state lives in app-private storage. -->
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
 
     <!-- HERMES_HOME holds the API keys from .env: never hand them to the cloud
          backup or the device-to-device transfer transport. allowBackup covers

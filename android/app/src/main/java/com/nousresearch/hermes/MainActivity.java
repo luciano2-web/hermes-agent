@@ -1,7 +1,6 @@
 package com.nousresearch.hermes;
 
 import android.Manifest;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -49,9 +48,16 @@ public class MainActivity extends AppCompatActivity {
     private TextView statusText;
     private Button startButton;
 
-    // Thread 1 runs the (blocking) dashboard server, thread 2 waits for it to answer.
-    // The executor belongs to this Activity; the runtime it drives does not.
-    private final ExecutorService executor = Executors.newFixedThreadPool(2);
+    // The dashboard server blocks for its whole life, so it runs on a process-wide
+    // executor that is never shut down: onDestroy() must not be able to interrupt it.
+    // Interrupting here would kill a running server while the static flag below still
+    // says it is up, and the next Activity would then wait out the whole ready timeout
+    // for a server nobody will ever start again.
+    private static final ExecutorService SERVER_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Object SERVER_LOCK = new Object();
+
+    // This Activity's own pool: only the launch and the ready-poll, both safe to interrupt.
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     // Process-wide launch state. The Python runtime and the dashboard outlive this
     // Activity (rotation, relaunch from the launcher while the foreground service keeps
@@ -91,7 +97,9 @@ public class MainActivity extends AppCompatActivity {
 
         if (dashboardError != null) {
             // The previous launch failed: show that instead of auto-retrying on every
-            // recreation. Retry is the user's call.
+            // recreation. Retry is the user's call. Nothing is running, so drop the
+            // service a failed launch may have left behind.
+            HermesService.stop(getApplicationContext());
             showFailure(dashboardError);
         } else {
             launchAgent();
@@ -141,6 +149,13 @@ public class MainActivity extends AppCompatActivity {
         progressBar.setVisibility(View.VISIBLE);
         statusText.setText(R.string.starting_python);
 
+        // Now, while the app is in the foreground: Android 12+ throws
+        // ForegroundServiceStartNotAllowedException if a foreground service is started
+        // from the background, which is where a dashboard that becomes ready after the
+        // user pressed Home would be. Starting here also covers the launch itself —
+        // the longest and most killable phase — instead of only the result.
+        HermesService.start(this, HermesService.STATE_STARTING);
+
         executor.execute(this::startPython);
     }
 
@@ -153,26 +168,31 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        HermesService.update(getApplicationContext(), HermesService.STATE_RUNNING);
         runOnUiThread(() -> statusText.setText(R.string.starting_dashboard));
 
-        if (!dashboardRunning) {
-            dashboardRunning = true;
-            // The dashboard blocks for the lifetime of the server, so it owns its own thread.
-            executor.execute(() -> {
-                try {
-                    int rc = PythonManager.startDashboard(
-                            new File(getFilesDir(), "hermes-home"), DASHBOARD_PORT);
-                    // 0: the server this call started has stopped. 1: another thread already
-                    // owns it, so this one was a no-op and the server keeps running.
-                    if (rc == 0) {
+        // Path (not a Context) so the static executor never keeps this Activity alive.
+        final File hermesHome = new File(getApplicationContext().getFilesDir(), "hermes-home");
+        // One launch at a time: without this, two Activities racing through the window
+        // would both submit a server and the loser would fail to bind port 9119.
+        synchronized (SERVER_LOCK) {
+            if (!dashboardRunning) {
+                dashboardRunning = true;
+                SERVER_EXECUTOR.execute(() -> {
+                    try {
+                        int rc = PythonManager.startDashboard(hermesHome, DASHBOARD_PORT);
+                        // 0: the server this call started has stopped. 1: another thread already
+                        // owns it, so this one was a no-op and the server keeps running.
+                        if (rc == 0) {
+                            dashboardRunning = false;
+                        }
+                    } catch (Throwable t) {
+                        Log.e(TAG, "Hermes dashboard stopped", t);
                         dashboardRunning = false;
+                        dashboardError = messageOf(t);
                     }
-                } catch (Throwable t) {
-                    Log.e(TAG, "Hermes dashboard stopped", t);
-                    dashboardRunning = false;
-                    dashboardError = messageOf(t);
-                }
-            });
+                });
+            }
         }
 
         long deadline = System.currentTimeMillis() + READY_TIMEOUT_MS;
@@ -225,16 +245,15 @@ public class MainActivity extends AppCompatActivity {
         introPanel.setVisibility(View.GONE);
         webView.setVisibility(View.VISIBLE);
         webView.loadUrl(DASHBOARD_URL);
-
-        // Keep the agent process alive while the user is elsewhere in the app.
-        Intent service = new Intent(this, HermesService.class);
-        ContextCompat.startForegroundService(this, service);
     }
 
     private void fail(String reason) {
         launching = false;
         dashboardError = reason;
         Log.e(TAG, reason);
+        // A failed launch has nothing to keep alive, and this must hold even when the
+        // Activity is already gone and showFailure() will never run.
+        HermesService.stop(getApplicationContext());
         runOnUiThread(() -> {
             if (isDestroyed()) {
                 return;

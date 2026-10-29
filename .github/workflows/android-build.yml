@@ -174,6 +174,38 @@ jobs:
             echo "::warning::No ANDROID_SIGNING_KEY_BASE64 secret; the release APK will be debug-signed."
           fi
 
+      # The release job checks out a fresh tree, so it must stamp the version itself:
+      # without this every release APK shipped versionCode 1 — below the timestamp
+      # versionCode of the debug APK the same workflow uploads, which Android then
+      # refuses to install as a downgrade.
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${{ inputs.version }}
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.0-$(date +%Y%m%d%H%M)"
+          fi
+          # versionCode must be a positive 32-bit int (<= 2100000000): the digits
+          # of a date-stamped version are 15 digits and make AGP reject the build,
+          # so keep them only while they fit, else use minutes since the epoch.
+          VERSION_DIGITS=$(echo "$VERSION" | tr -cd '0-9')
+          if [ -n "$VERSION_DIGITS" ] && [ "${#VERSION_DIGITS}" -le 10 ] \
+                  && [ "$((10#$VERSION_DIGITS))" -gt 0 ] \
+                  && [ "$((10#$VERSION_DIGITS))" -le 2100000000 ]; then
+            # $((...)) drops leading zeros: Groovy reads "008" as octal.
+            VERSION_CODE="$((10#$VERSION_DIGITS))"
+          else
+            VERSION_CODE="$(( $(date +%s) / 60 ))"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION (versionCode $VERSION_CODE)"
+
+      - name: Update version in build.gradle
+        run: |
+          sed -i "s/versionCode [0-9]*/versionCode ${{ steps.version.outputs.version_code }}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.version }}\"/" android/app/build.gradle
+
       - name: Build release APK
         env:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
@@ -186,7 +218,7 @@ jobs:
 
       - name: Rename APK
         run: |
-          VERSION=1.0.0-$(date +%Y%m%d%H%M)
+          VERSION=${{ steps.version.outputs.version }}
           APK_NAME="Hermes-Agent-${VERSION}-release.apk"
           # Signed builds produce app-release.apk; unsigned ones app-release-unsigned.apk.
           if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then

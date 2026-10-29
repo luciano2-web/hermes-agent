@@ -6,6 +6,9 @@
     <string name="starting_python">Starting Python runtime&#8230;</string>
     <string name="starting_dashboard">Starting Hermes dashboard&#8230;</string>
     <string name="loading_dashboard">Loading dashboard&#8230;</string>
+    <string name="notify_idle">Tap to start the agent</string>
+    <string name="notify_starting">Starting the agent runtime&#8230;</string>
+    <string name="notify_running">Agent runtime is running</string>
     <string name="retry">Retry</string>
     <string name="error_message">An error occurred while starting Hermes Agent.</string>
 </resources>
