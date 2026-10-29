@@ -19,8 +19,8 @@ settings) is done from the dashboard.
 
 ## 🚀 Install
 
-1. Download `Hermes-Agent-<version>-debug.apk` from the
-   [releases page](../../releases) (or build it below).
+1. Download `Hermes-Agent-<version>-debug.apk` from the repository's
+   [releases](../../releases) or CI artifacts (or build it below).
 2. Allow your browser or file manager to install unknown apps
    (**Settings → Apps → Special access → Install unknown apps**).
 3. Open the downloaded file and tap **Install**, then **Open**.
@@ -62,15 +62,20 @@ cd android
 ```
 
 CI (`.github/workflows/android-build.yml`) runs the same build on pushes and PRs that
-touch `android/`, and uploads the APK as an artifact (and attaches it to a GitHub release
-for `v*` tags).
+touch `android/` and uploads the APK as an artifact (7 days; 30 for a release build).
+The `versionCode` comes from the git commit count, so it only ever grows.
 
 ### Release signing
 
-`assembleRelease` signs with `android/app/keystore/hermes-release.keystore` when it
-exists, and falls back to debug signing otherwise so the APK stays installable. Supply
-the keystore (and `ANDROID_STORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`)
-to produce a properly signed release.
+`build_android_apk.sh --release` refuses to build without real credentials: a keystore
+at `ANDROID_KEYSTORE_PATH` (default `android/app/keystore/hermes-release.keystore`) plus
+`ANDROID_STORE_PASSWORD` and `ANDROID_KEY_PASSWORD`. CI supplies them from the
+`ANDROID_SIGNING_KEY` (base64 keystore), `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_PASSWORD`
+and `ANDROID_KEY_ALIAS` secrets.
+
+Driving Gradle directly is laxer: `assembleRelease` signs with that keystore when it
+exists and falls back to debug signing otherwise, so the APK stays installable while
+you are iterating.
 
 ## 📦 Python packaging
 

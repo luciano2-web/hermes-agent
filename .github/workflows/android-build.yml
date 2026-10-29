@@ -24,13 +24,15 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout repository
@@ -44,35 +46,43 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # Chaquopy compiles the app's Python sources with a build-machine Python
-      # whose major.minor matches the app's (3.13).
+      # Chaquopy byte-compiles the bundled Python packages with a build-machine
+      # interpreter whose major.minor matches the app's (3.13); without this the
+      # runner's default python3 is too old and configuration fails.
       - name: Set up Python 3.13 (Chaquopy buildPython)
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           accept-android-sdk-licenses: true
+          packages: 'platform-tools'
 
       - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          SDKMANAGER="$(command -v sdkmanager)"
+          test -x "$SDKMANAGER" || { echo "sdkmanager not found at $SDKMANAGER"; exit 1; }
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "emulator"
 
       - name: Cache Gradle dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
       - name: Set version
         id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          VERSION=${{ inputs.version }}
+          VERSION="$REQUESTED_VERSION"
           if [ -z "$VERSION" ]; then
             # Get version from git tag or use timestamp
             if [ -n "$GITHUB_REF" ] && echo "$GITHUB_REF" | grep -q "refs/tags/v"; then
@@ -81,39 +91,23 @@ jobs:
               VERSION="1.0.0-$(date +%Y%m%d%H%M)"
             fi
           fi
-          # versionCode must be a positive 32-bit int (<= 2100000000): the digits
-          # of a date-stamped version are 15 digits and make AGP reject the build,
-          # so keep them only while they fit, else use minutes since the epoch.
-          VERSION_DIGITS=$(echo "$VERSION" | tr -cd '0-9')
-          if [ -n "$VERSION_DIGITS" ] && [ "${#VERSION_DIGITS}" -le 10 ] \
-                  && [ "$((10#$VERSION_DIGITS))" -gt 0 ] \
-                  && [ "$((10#$VERSION_DIGITS))" -le 2100000000 ]; then
-            # $((...)) drops leading zeros: Groovy reads "008" as octal.
-            VERSION_CODE="$((10#$VERSION_DIGITS))"
-          else
-            VERSION_CODE="$(( $(date +%s) / 60 ))"
+          if [[ ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]]; then
+            echo "Invalid version string: $VERSION" >&2
+            exit 2
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION (versionCode $VERSION_CODE)"
-
-      - name: Update version in build.gradle
-        run: |
-          sed -i "s/versionCode [0-9]*/versionCode ${{ steps.version.outputs.version_code }}/" android/app/build.gradle
-          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.version }}\"/" android/app/build.gradle
+          echo "Building version: $VERSION"
 
       - name: Build debug APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          APK_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/build_android_apk.sh --version "$APK_VERSION" --debug
 
-      - name: Rename APK
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          APK_NAME="Hermes-Agent-${VERSION}-debug.apk"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
-          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+      - name: Set APK artifact name
+        id: apk
+        env:
+          APK_VERSION: ${{ steps.version.outputs.version }}
+        run: echo "apk_name=Hermes-Agent-${APK_VERSION}-debug.apk" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -122,26 +116,22 @@ jobs:
           path: Hermes-Agent-*.apk
           retention-days: 7
 
-      - name: Create release (if tagged)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: Hermes-Agent-*.apk
-          generate_release_notes: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   release:
-    name: Build signed release APK
+    name: Build signed Release APK
     if: inputs.release == true && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
+      # The release APK derives its versionCode from `git rev-list --count HEAD`
+      # inside the build script: a depth-1 checkout counts 1, so every release would
+      # ship versionCode 1 — below the debug APK the other job uploads, which Android
+      # then refuses to install as a downgrade.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -155,82 +145,57 @@ jobs:
           python-version: '3.13'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           accept-android-sdk-licenses: true
+          packages: 'platform-tools'
 
       - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          SDKMANAGER="$(command -v sdkmanager)"
+          test -x "$SDKMANAGER" || { echo "sdkmanager not found at $SDKMANAGER"; exit 1; }
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Restore signing keystore
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Prepare signing key
         env:
-          ANDROID_SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
         run: |
-          if [ -n "$ANDROID_SIGNING_KEY_BASE64" ]; then
-            mkdir -p android/app/keystore
-            echo "$ANDROID_SIGNING_KEY_BASE64" | base64 -d > android/app/keystore/hermes-release.keystore
-            echo "Release keystore restored."
-          else
-            echo "::warning::No ANDROID_SIGNING_KEY_BASE64 secret; the release APK will be debug-signed."
+          set -euo pipefail
+          if [ -z "${ANDROID_SIGNING_KEY:-}" ]; then
+            echo "Missing repository secret ANDROID_SIGNING_KEY (base64-encoded keystore)." >&2
+            exit 1
           fi
+          printf '%s' "$ANDROID_SIGNING_KEY" | base64 --decode > "$RUNNER_TEMP/hermes-release.keystore"
+          test -s "$RUNNER_TEMP/hermes-release.keystore" || { echo "Decoded keystore is empty." >&2; exit 1; }
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/hermes-release.keystore" >> "$GITHUB_ENV"
 
-      # The release job checks out a fresh tree, so it must stamp the version itself:
-      # without this every release APK shipped versionCode 1 — below the timestamp
-      # versionCode of the debug APK the same workflow uploads, which Android then
-      # refuses to install as a downgrade.
-      - name: Set version
-        id: version
-        run: |
-          VERSION=${{ inputs.version }}
-          if [ -z "$VERSION" ]; then
-            VERSION="1.0.0-$(date +%Y%m%d%H%M)"
-          fi
-          # versionCode must be a positive 32-bit int (<= 2100000000): the digits
-          # of a date-stamped version are 15 digits and make AGP reject the build,
-          # so keep them only while they fit, else use minutes since the epoch.
-          VERSION_DIGITS=$(echo "$VERSION" | tr -cd '0-9')
-          if [ -n "$VERSION_DIGITS" ] && [ "${#VERSION_DIGITS}" -le 10 ] \
-                  && [ "$((10#$VERSION_DIGITS))" -gt 0 ] \
-                  && [ "$((10#$VERSION_DIGITS))" -le 2100000000 ]; then
-            # $((...)) drops leading zeros: Groovy reads "008" as octal.
-            VERSION_CODE="$((10#$VERSION_DIGITS))"
-          else
-            VERSION_CODE="$(( $(date +%s) / 60 ))"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION (versionCode $VERSION_CODE)"
-
-      - name: Update version in build.gradle
-        run: |
-          sed -i "s/versionCode [0-9]*/versionCode ${{ steps.version.outputs.version_code }}/" android/app/build.gradle
-          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.version }}\"/" android/app/build.gradle
-
-      - name: Build release APK
+      - name: Build signed release APK
         env:
+          APK_VERSION: ${{ needs.build.outputs.version }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace --no-daemon
+          set -euo pipefail
+          test -n "$ANDROID_STORE_PASSWORD" || { echo "Missing ANDROID_STORE_PASSWORD secret." >&2; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret." >&2; exit 1; }
+          bash scripts/build_android_apk.sh --version "$APK_VERSION" --release
 
-      - name: Rename APK
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          APK_NAME="Hermes-Agent-${VERSION}-release.apk"
-          # Signed builds produce app-release.apk; unsigned ones app-release-unsigned.apk.
-          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk "$APK_NAME"
-          else
-            cp android/app/build/outputs/apk/release/app-release-unsigned.apk "$APK_NAME"
-          fi
-          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release APK
+      - name: Upload signed release APK
         uses: actions/upload-artifact@v4
         with:
           name: hermes-agent-release-apk
-          path: Hermes-Agent-*.apk
+          path: Hermes-Agent-*-release.apk
+          if-no-files-found: error
           retention-days: 30

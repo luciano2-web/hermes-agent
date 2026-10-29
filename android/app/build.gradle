@@ -30,7 +30,10 @@ def resolveBuildPython() {
 }
 
 def buildPythonCmd = resolveBuildPython()
-def releaseKeystore = file('keystore/hermes-release.keystore')
+// The build script and CI export ANDROID_KEYSTORE_PATH, which may live outside the
+// project (CI decodes it into the runner temp dir); a local build falls back to the
+// conventional in-project location.
+def releaseKeystore = file(System.getenv('ANDROID_KEYSTORE_PATH') ?: 'keystore/hermes-release.keystore')
 
 android {
     namespace 'com.nousresearch.hermes'
@@ -40,8 +43,10 @@ android {
         applicationId "com.nousresearch.hermes"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        // Set by scripts/build_android_apk.sh / CI with -P, so versioning never
+        // rewrites this file. Defaults keep a bare `gradlew assembleDebug` buildable.
+        versionCode (project.findProperty('androidVersionCode')?.toString()?.toInteger() ?: 1)
+        versionName (project.findProperty('androidVersionName')?.toString() ?: "1.0.0")
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
