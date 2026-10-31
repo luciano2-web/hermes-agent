@@ -204,7 +204,12 @@ def test_legacy_idempotency_schema_migrates_without_losing_tasks(tmp_path):
 
     assert restored is not None
     assert restored.title == "Old task"
-    assert restored.approval_state == "not_requested"
+    # Legacy pending state is preserved conservatively; approval cannot be bypassed.
+    assert restored.approval_state == "pending"
+    with pytest.raises(ValueError, match="must be approved"):
+        store.transition(restored.id, TaskStatus.RUNNING)
+    approved_legacy = store.approve(restored.id, approved=True)
+    assert approved_legacy.status is TaskStatus.RUNNING
     assert other_profile.profile_id == "school"
 
 
