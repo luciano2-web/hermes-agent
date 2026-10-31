@@ -6,10 +6,12 @@ on:
     paths:
       - 'android/**'
       - '.github/workflows/android-build.yml'
+      - 'scripts/build_android_apk.sh'
   pull_request:
     paths:
       - 'android/**'
       - '.github/workflows/android-build.yml'
+      - 'scripts/build_android_apk.sh'
   workflow_dispatch:
     inputs:
       version:
