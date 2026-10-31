@@ -279,7 +279,9 @@ class PersonalComputerTaskStore:
         summary: str | None = None,
         approval_state: str | None = None,
     ) -> PersonalComputerTask:
-        """Atomically transition a task; approval resumes must use approve()."""
+        """Atomically transition a task; approval decisions must use approve()."""
+        if approval_state is not None:
+            raise ValueError("approval_state can only be changed by approve()")
         return self._transition_task(
             task_id,
             new_status,
