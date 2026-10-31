@@ -95,6 +95,56 @@ class PersonalComputerTaskStore:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    def _migrate_legacy_idempotency_constraint(self, connection: sqlite3.Connection) -> None:
+        """Replace the pre-profile unique key without losing existing task rows."""
+        for index in connection.execute("PRAGMA index_list(personal_computer_tasks)"):
+            if not index["unique"]:
+                continue
+            columns = [
+                row["name"]
+                for row in connection.execute(f"PRAGMA index_info('{index['name']}')")
+            ]
+            if columns != ["requester_id", "source", "idempotency_key"]:
+                continue
+
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                CREATE TABLE personal_computer_tasks_migrating (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    requester_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    workspace_id TEXT NOT NULL DEFAULT 'default',
+                    idempotency_key TEXT,
+                    approval_required INTEGER NOT NULL DEFAULT 1,
+                    approval_state TEXT NOT NULL DEFAULT 'not_requested',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(requester_id, source, profile_id, idempotency_key)
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO personal_computer_tasks_migrating
+                SELECT id, title, requester_id, source, profile_id, status,
+                       created_at, updated_at, summary, workspace_id,
+                       idempotency_key, approval_required, approval_state,
+                       metadata_json
+                FROM personal_computer_tasks
+                """
+            )
+            connection.execute("DROP TABLE personal_computer_tasks")
+            connection.execute(
+                "ALTER TABLE personal_computer_tasks_migrating RENAME TO personal_computer_tasks"
+            )
+            break
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
@@ -115,10 +165,11 @@ class PersonalComputerTaskStore:
                     approval_required INTEGER NOT NULL DEFAULT 1,
                     approval_state TEXT NOT NULL DEFAULT 'not_requested',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
-                    UNIQUE(requester_id, source, idempotency_key)
+                    UNIQUE(requester_id, source, profile_id, idempotency_key)
                 )
                 """
             )
+            self._migrate_legacy_idempotency_constraint(connection)
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pc_tasks_profile_updated "
                 "ON personal_computer_tasks(profile_id, updated_at DESC)"
@@ -157,9 +208,13 @@ class PersonalComputerTaskStore:
                 existing = connection.execute(
                     """
                     SELECT * FROM personal_computer_tasks
-                    WHERE requester_id = ? AND source = ? AND idempotency_key = ?
+                    WHERE requester_id = ? AND source = ? AND profile_id = ?
+                      AND idempotency_key = ?
                     """,
-                    (required["requester_id"], required["source"], idempotency_key),
+                    (
+                        required["requester_id"], required["source"],
+                        required["profile_id"], idempotency_key,
+                    ),
                 ).fetchone()
                 if existing:
                     return PersonalComputerTask.from_row(existing)
@@ -175,7 +230,7 @@ class PersonalComputerTaskStore:
                     task_id, required["title"], required["requester_id"],
                     required["source"], required["profile_id"], TaskStatus.QUEUED.value,
                     now, now, required["workspace_id"], idempotency_key,
-                    int(approval_required), "pending" if approval_required else "not_required",
+                    int(approval_required), "not_requested" if approval_required else "not_required",
                     json.dumps(metadata or {}, separators=(",", ":"), sort_keys=True),
                 ),
             )
@@ -198,7 +253,9 @@ class PersonalComputerTaskStore:
             raise ValueError("limit must be between 1 and 200")
         query = "SELECT * FROM personal_computer_tasks WHERE profile_id = ?"
         params: list[Any] = [profile_id]
-        if statuses:
+        if statuses is not None and not statuses:
+            return []
+        if statuses is not None:
             values = sorted(status.value for status in statuses)
             query += f" AND status IN ({','.join('?' for _ in values)})"
             params.extend(values)
@@ -217,7 +274,27 @@ class PersonalComputerTaskStore:
         summary: str | None = None,
         approval_state: str | None = None,
     ) -> PersonalComputerTask:
-        """Atomically transition a task; reject stale or illegal transitions."""
+        """Atomically transition a task; approval resumes must use approve()."""
+        return self._transition_task(
+            task_id,
+            new_status,
+            expected_status=expected_status,
+            summary=summary,
+            approval_state=approval_state,
+            allow_approval_resume=False,
+        )
+
+    def _transition_task(
+        self,
+        task_id: str,
+        new_status: TaskStatus,
+        *,
+        expected_status: TaskStatus | None = None,
+        summary: str | None = None,
+        approval_state: str | None = None,
+        allow_approval_resume: bool,
+    ) -> PersonalComputerTask:
+        """Apply a transition under a write lock, optionally from approve()."""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -230,11 +307,21 @@ class PersonalComputerTaskStore:
                 raise ValueError(f"Task state changed: expected {expected_status.value}, found {current.value}")
             if new_status != current and new_status not in _TRANSITIONS[current]:
                 raise ValueError(f"Invalid task transition: {current.value} -> {new_status.value}")
+            if approval_state not in (None, "pending", "approved", "rejected", "not_required", "not_requested"):
+                raise ValueError("Invalid approval_state")
             next_approval = approval_state if approval_state is not None else row["approval_state"]
             if new_status == TaskStatus.AWAITING_APPROVAL and not row["approval_required"]:
                 raise ValueError("This task does not require approval")
-            if approval_state not in (None, "pending", "approved", "rejected", "not_required"):
-                raise ValueError("Invalid approval_state")
+            if new_status == TaskStatus.AWAITING_APPROVAL and approval_state is None:
+                next_approval = "pending"
+            if (
+                new_status == TaskStatus.RUNNING
+                and row["approval_required"]
+                and current in {TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED}
+                and row["approval_state"] == "pending"
+                and not allow_approval_resume
+            ):
+                raise ValueError("Task must be approved through approve() before it can resume")
             next_summary = row["summary"] if summary is None else summary
             connection.execute(
                 """
@@ -254,18 +341,20 @@ class PersonalComputerTaskStore:
         task = self.get_task(task_id)
         if task is None:
             raise KeyError(f"Unknown task: {task_id}")
-        if task.status != TaskStatus.AWAITING_APPROVAL:
+        if task.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED}:
             raise ValueError("Task is not waiting for approval")
-        if not task.approval_required:
-            raise ValueError("Task does not require approval")
+        if not task.approval_required or task.approval_state != "pending":
+            raise ValueError("Task does not have a pending approval")
         if approved:
-            return self.transition(
+            return self._transition_task(
                 task_id, TaskStatus.RUNNING,
-                expected_status=TaskStatus.AWAITING_APPROVAL,
+                expected_status=task.status,
                 approval_state="approved",
+                allow_approval_resume=True,
             )
-        return self.transition(
+        return self._transition_task(
             task_id, TaskStatus.CANCELLED,
-            expected_status=TaskStatus.AWAITING_APPROVAL,
+            expected_status=task.status,
             approval_state="rejected",
+            allow_approval_resume=True,
         )
