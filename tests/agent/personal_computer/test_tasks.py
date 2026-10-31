@@ -204,6 +204,7 @@ def test_legacy_idempotency_schema_migrates_without_losing_tasks(tmp_path):
 
     assert restored is not None
     assert restored.title == "Old task"
+    assert restored.approval_state == "not_requested"
     assert other_profile.profile_id == "school"
 
 
