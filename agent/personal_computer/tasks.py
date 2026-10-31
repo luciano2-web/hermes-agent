@@ -328,7 +328,7 @@ class PersonalComputerTaskStore:
                 and row["approval_required"]
                 and (
                     current == TaskStatus.AWAITING_APPROVAL
-                    or (current == TaskStatus.PAUSED and row["approval_state"] == "pending")
+                    or row["approval_state"] == "pending"
                 )
                 and not allow_approval_resume
             ):
