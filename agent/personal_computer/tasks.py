@@ -97,16 +97,23 @@ class PersonalComputerTaskStore:
 
     def _migrate_legacy_idempotency_constraint(self, connection: sqlite3.Connection) -> None:
         """Replace the pre-profile unique key without losing existing task rows."""
-        for index in connection.execute("PRAGMA index_list(personal_computer_tasks)"):
+        indexes = connection.execute(
+            "PRAGMA index_list(personal_computer_tasks)"
+        ).fetchall()
+        legacy_index_found = False
+        for index in indexes:
             if not index["unique"]:
                 continue
-            columns = [
-                row["name"]
-                for row in connection.execute(f"PRAGMA index_info('{index['name']}')")
-            ]
-            if columns != ["requester_id", "source", "idempotency_key"]:
-                continue
+            columns = connection.execute(
+                f"PRAGMA index_info('{index['name']}')"
+            ).fetchall()
+            if [row["name"] for row in columns] == [
+                "requester_id", "source", "idempotency_key"
+            ]:
+                legacy_index_found = True
+                break
 
+        if legacy_index_found:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
@@ -137,7 +144,6 @@ class PersonalComputerTaskStore:
                        idempotency_key, approval_required,
                        CASE
                            WHEN status = 'awaiting_approval' AND approval_required = 1 THEN 'pending'
-                           WHEN approval_required = 1 AND approval_state = 'pending' THEN 'not_requested'
                            ELSE approval_state
                        END,
                        metadata_json
@@ -352,7 +358,9 @@ class PersonalComputerTaskStore:
         task = self.get_task(task_id)
         if task is None:
             raise KeyError(f"Unknown task: {task_id}")
-        if task.status not in {TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED}:
+        if task.status not in {
+            TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED, TaskStatus.QUEUED
+        }:
             raise ValueError("Task is not waiting for approval")
         if not task.approval_required or task.approval_state != "pending":
             raise ValueError("Task does not have a pending approval")
