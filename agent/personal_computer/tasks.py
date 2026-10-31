@@ -134,7 +134,12 @@ class PersonalComputerTaskStore:
                 INSERT INTO personal_computer_tasks_migrating
                 SELECT id, title, requester_id, source, profile_id, status,
                        created_at, updated_at, summary, workspace_id,
-                       idempotency_key, approval_required, approval_state,
+                       idempotency_key, approval_required,
+                       CASE
+                           WHEN status = 'awaiting_approval' AND approval_required = 1 THEN 'pending'
+                           WHEN approval_required = 1 AND approval_state = 'pending' THEN 'not_requested'
+                           ELSE approval_state
+                       END,
                        metadata_json
                 FROM personal_computer_tasks
                 """
@@ -312,13 +317,17 @@ class PersonalComputerTaskStore:
             next_approval = approval_state if approval_state is not None else row["approval_state"]
             if new_status == TaskStatus.AWAITING_APPROVAL and not row["approval_required"]:
                 raise ValueError("This task does not require approval")
-            if new_status == TaskStatus.AWAITING_APPROVAL and approval_state is None:
+            if new_status == TaskStatus.AWAITING_APPROVAL:
+                if approval_state not in (None, "pending"):
+                    raise ValueError("An approval request must remain pending until approve() is called")
                 next_approval = "pending"
             if (
                 new_status == TaskStatus.RUNNING
                 and row["approval_required"]
-                and current in {TaskStatus.AWAITING_APPROVAL, TaskStatus.PAUSED}
-                and row["approval_state"] == "pending"
+                and (
+                    current == TaskStatus.AWAITING_APPROVAL
+                    or (current == TaskStatus.PAUSED and row["approval_state"] == "pending")
+                )
                 and not allow_approval_resume
             ):
                 raise ValueError("Task must be approved through approve() before it can resume")
