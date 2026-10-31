@@ -205,3 +205,20 @@ def test_legacy_idempotency_schema_migrates_without_losing_tasks(tmp_path):
     assert restored is not None
     assert restored.title == "Old task"
     assert other_profile.profile_id == "school"
+
+
+
+def test_pending_approval_cannot_be_bypassed_through_queue(tmp_path):
+    store = make_store(tmp_path)
+    task = create(store)
+    store.transition(task.id, TaskStatus.RUNNING)
+    waiting = store.transition(task.id, TaskStatus.AWAITING_APPROVAL)
+    paused = store.transition(waiting.id, TaskStatus.PAUSED)
+    queued = store.transition(paused.id, TaskStatus.QUEUED)
+
+    with pytest.raises(ValueError, match="must be approved"):
+        store.transition(queued.id, TaskStatus.RUNNING)
+
+    approved = store.approve(queued.id, approved=True)
+    assert approved.status is TaskStatus.RUNNING
+    assert approved.approval_state == "approved"
