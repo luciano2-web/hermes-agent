@@ -132,6 +132,9 @@ def test_direct_transition_cannot_bypass_approval(tmp_path):
     with pytest.raises(ValueError, match="must be approved"):
         store.transition(waiting.id, TaskStatus.RUNNING)
 
+    with pytest.raises(ValueError, match="must be approved"):
+        store.transition(waiting.id, TaskStatus.RUNNING, approval_state="approved")
+
     assert store.get_task(waiting.id).status is TaskStatus.AWAITING_APPROVAL
 
 
