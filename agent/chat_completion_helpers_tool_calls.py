@@ -97,7 +97,9 @@ class _ToolCallAccumulator:
                 # NVIDIA NIM) resend the full name every chunk — += gives "read_fileread_file".
                 entry["function"]["name"] = tc_function.name
             if getattr(tc_function, "arguments", None):
-                parts.append(tc_function.arguments)
+                args = tc_function.arguments
+                if args is not None:
+                    parts.append(args)
             # Some gateways sign Gemini 3 calls inside ``function``.
             if isinstance(fn_sig := field(tc_function, "thought_signature"), str) and fn_sig:
                 entry["thought_signature"] = fn_sig
