@@ -1,3 +1,11 @@
+# Hermes Agent
+
+This repository contains the Hermes Agent project.
+
+# Hermes Agent
+
+A placeholder project for the Hermes Agent.
+=======
 <p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
@@ -243,3 +251,4 @@ for activation, daily use, dependency changes, and leaving the environment.
 MIT — see [LICENSE](LICENSE).
 
 Built by [Nous Research](https://nousresearch.com).
+>>>>>>> origin/main
