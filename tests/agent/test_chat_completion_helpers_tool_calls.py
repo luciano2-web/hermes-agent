@@ -38,3 +38,23 @@ def test_same_name_fresh_id_splits_only_after_complete_arguments():
         ("terminal", '{"command": "ls"}'),
         ("read_file", "{}"),
     ]
+
+
+def test_none_arguments_do_not_crash_join():
+    # Regression test for issue #148158: tool_call args incompletos (None arguments)
+    # When arguments is None, it should not be appended to parts to avoid TypeError in join
+    assert _calls(
+        ("701601222", "terminal", None),
+        ("tool-call-1", None, '{"com'),
+        ("tool-call-2", None, 'mand": '),
+        ("tool-call-3", None, '"ls"}'),
+    ) == [("terminal", '{"command": "ls"}')]
+
+
+def test_none_arguments_with_name():
+    # Test that None arguments with a name still work correctly
+    assert _calls(
+        ("701601222", "terminal", None),
+        ("tool-call-1", "terminal", '{"command": '),
+        ("tool-call-2", None, '"ls"}'),
+    ) == [("terminal", '{"command": "ls"}')]
